@@ -10,18 +10,26 @@ from utils.logger import IterationLogger, print_final_summary
 
 
 def L1_norm(X):
-    """Вычисление L1 нормы"""
-    n = X.shape[0]
-    if type(X[0]) == np.ndarray:
-        l2_norm = abs(X[0][0])
-        for i in range(n):
-            for j in range(n):
-                l2_norm = max(abs(X[i][j]), l2_norm)
-    else:
-        l2_norm = abs(X[0])
-        for i in range(n):
-            l2_norm = max(abs(X[i]), l2_norm)
-    return l2_norm
+    """Вычисление L1 нормы
+    
+    Для вектора: ||x||₁ = Σ|x_i|
+    Для матрицы: ||A||₁ = max по j (Σ|a_ij|) — максимум суммы модулей по столбцам
+    """
+    if X.ndim == 1:  # Вектор
+        norm = 0
+        for i in range(len(X)):
+            norm += abs(X[i])
+        return norm
+    else:  # Матрица
+        n = X.shape[1]  # Количество столбцов
+        max_col_sum = 0
+        for j in range(n):  # Идем по столбцам
+            col_sum = 0
+            for i in range(n):  # Суммируем по строкам в столбце j
+                col_sum += abs(X[i][j])
+            if col_sum > max_col_sum:
+                max_col_sum = col_sum
+        return max_col_sum
 
 
 def solve_iterative(A, b, eps, logger=None):
