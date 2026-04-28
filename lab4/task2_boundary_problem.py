@@ -1,6 +1,4 @@
 """
-Лабораторная работа 4. Задание 4.2
-Численное решение краевой задачи для ОДУ 2-го порядка
 
 Вариант 14:
 (e^x + 1)y'' - 2y' - e^x * y = 0
@@ -42,13 +40,16 @@ class BoundaryProblemSolver:
         
         def solve_cauchy(eta):
             """Решение задачи Коши с параметром eta"""
+            # Преобразуем eta в скаляр (fsolve может передать массив)
+            eta_val = float(np.atleast_1d(eta)[0])
+            
             # Определяем начальные условия в зависимости от типа левого ГУ
             if bc_left[0] == 'derivative':
                 # y'(a) = bc_left[1], y(a) = eta (неизвестно)
-                y0 = np.array([float(eta), float(bc_left[1])], dtype=float)
+                y0 = np.array([eta_val, float(bc_left[1])], dtype=float)
             else:
                 # y(a) = bc_left[1], y'(a) = eta (неизвестно)
-                y0 = np.array([float(bc_left[1]), float(eta)], dtype=float)
+                y0 = np.array([float(bc_left[1]), eta_val], dtype=float)
             
             # Решаем методом РК4
             y = np.zeros((self.n, 2))
@@ -330,8 +331,13 @@ def plot_results(results: dict, exact_solution: Callable, h_main: float):
     ax2.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig('task2_results.png', dpi=150)
-    print("\nГрафики сохранены в 'chislaki/lab4/task2_results.png'")
+    
+    # Сохраняем в текущей директории скрипта
+    import os
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    output_path = os.path.join(script_dir, 'task2_results.png')
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    print(f"\nГрафики сохранены в '{output_path}'")
     plt.show()
 
 
