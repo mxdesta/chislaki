@@ -29,14 +29,9 @@ class BoundaryProblemSolver:
         self.x = np.linspace(a, b, self.n)
     
     def shooting_method(self, f_system: Callable, bc_left: Tuple, bc_right: Callable,
-                       initial_guess: float = 0.0) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Метод стрельбы
-        f_system: правая часть системы ОДУ 1-го порядка
-        bc_left: левое граничное условие (тип, значение)
-        bc_right: функция проверки правого граничного условия
-        initial_guess: начальное приближение для неизвестного параметра
-        """
+                       initial_guess: float = 0.0, tol: float = 1e-6, max_iter: int = 50,
+                       verbose: bool = False) -> Tuple[np.ndarray, np.ndarray]:
+
         
         def solve_cauchy(eta):
             """Решение задачи Коши с параметром eta"""
@@ -68,12 +63,78 @@ class BoundaryProblemSolver:
             """Невязка правого граничного условия"""
             y = solve_cauchy(eta)
             return bc_right(y[-1])
+    
         
-        # Находим корень уравнения невязки
-        eta_solution = fsolve(residual, initial_guess)[0]
-        y_solution = solve_cauchy(eta_solution)
+        if verbose:
+            print("\n" + "="*70)
+            print("МЕТОД СТРЕЛЬБЫ: Итерационный процесс")
+            print("="*70)
+            print(f"{'Итер':>6} {'eta':>15} {'Невязка F(eta)':>18} {'|Delta eta|':>18}")
+            print("-"*70)
         
-        return self.x, y_solution[:, 0]
+        # Начальные приближения
+        eta_prev = initial_guess
+        eta_curr = initial_guess + 0.1  # небольшое возмущение
+        
+        for iteration in range(max_iter):
+            # Решаем задачу Коши для текущих значений η
+            y_prev = solve_cauchy(eta_prev)
+            y_curr = solve_cauchy(eta_curr)
+            
+            # Вычисляем невязки правого ГУ
+            F_prev = residual(eta_prev)
+            F_curr = residual(eta_curr)
+            
+            # Вывод информации о текущей итерации
+            if verbose and iteration > 0:
+                delta_eta = abs(eta_curr - eta_prev)
+                print(f"{iteration:6d} {eta_curr:15.8e} {F_curr:15.8e} {delta_eta:15.8e}")
+            
+            # КРИТЕРИЙ ОСТАНОВКИ 1: Невязка достаточно мала
+            if abs(F_curr) < tol:
+                if verbose:
+                    print("-"*70)
+                    print(f"✓ Сходимость достигнута за {iteration+1} итераций")
+                    print(f"  Невязка: |F(η)| = {abs(F_curr):.2e} < {tol:.2e}")
+                    print(f"  Найденное значение: η = {eta_curr:.10f}")
+                return self.x, y_curr[:, 0]
+            
+            # Проверка на деление на ноль
+            if abs(F_curr - F_prev) < 1e-14:
+                if verbose:
+                    print("\n⚠ Предупреждение: F_curr ≈ F_prev, переключение на fsolve")
+                eta_solution = fsolve(residual, eta_curr, full_output=False)[0]
+                y_solution = solve_cauchy(eta_solution)
+                return self.x, y_solution[:, 0]
+            
+            # МЕТОД СЕКУЩИХ: Вычисление следующего приближения
+            eta_next = eta_curr - F_curr * (eta_curr - eta_prev) / (F_curr - F_prev)
+            
+            # КРИТЕРИЙ ОСТАНОВКИ 2: Изменение η мало
+            delta_eta = abs(eta_next - eta_curr)
+            relative_change = delta_eta / (1 + abs(eta_curr))
+            
+            if relative_change < tol:
+                y_next = solve_cauchy(eta_next)
+                F_next = residual(eta_next)
+                if verbose:
+                    print(f"{iteration+1:6d} {eta_next:15.8e} {F_next:15.8e} {delta_eta:15.8e}")
+                    print("-"*70)
+                    print(f"✓ Сходимость по изменению η за {iteration+1} итераций")
+                    print(f"  Относительное изменение: {relative_change:.2e} < {tol:.2e}")
+                    print(f"  Найденное значение: η = {eta_next:.10f}")
+                return self.x, y_next[:, 0]
+            
+            # Переход к следующей итерации
+            eta_prev, eta_curr = eta_curr, eta_next
+        
+        # НЕ СОШЛОСЬ ЗА max_iter ИТЕРАЦИЙ
+        if verbose:
+            print("-"*70)
+            print(f"⚠ Не сошлось за {max_iter} итераций")
+            print(f"  Последняя невязка: |F(η)| = {abs(F_curr):.2e}")
+        
+        return self.x, y_curr[:, 0]
     
     def finite_difference_method(self, p: Callable, q: Callable, f: Callable,
                                 bc_left: Tuple, bc_right: Tuple) -> Tuple[np.ndarray, np.ndarray]:
@@ -216,7 +277,8 @@ def problem_variant_14():
         # Метод стрельбы
         print("\n--- Метод стрельбы ---")
         x_shoot, y_shoot = solver.shooting_method(
-            f_system, bc_left_shooting, bc_right_shooting, initial_guess=0.0
+            f_system, bc_left_shooting, bc_right_shooting, initial_guess=0.0,
+            verbose=(h == h_values[0])  # Показываем итерации только для первого шага
         )
         
         # Метод конечных разностей
