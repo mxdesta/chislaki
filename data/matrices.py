@@ -70,3 +70,11 @@ TEST_MATRIX_4x4 = np.array([
 ], dtype=float)
 
 TEST_VECTOR_4x4 = np.array([101, 51, -53, -63], dtype=float)
+
+TEST_MATRIX_5x5 = np.array([
+    [-6, -5, -3, -8, 10],
+    [5, -1, -5, -4, 9],
+    [-6, 5, 5, 0, -6],
+    [-7, -2, 8, 5, 3],
+    [-2, 4, -6, 4, -2]
+], dtype=float)

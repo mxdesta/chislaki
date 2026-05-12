@@ -9,18 +9,34 @@ from utils.logger import IterationLogger, print_final_summary
 
 
 def tridiagonal_solve(A, b, logger=None):
-    """Метод прогонки"""
+    """Метод прогонки для трехдиагональных матриц
+    
+    Трехдиагональная матрица имеет вид:
+    [b0 c0  0  0 ...]
+    [a1 b1 c1  0 ...]
+    [ 0 a2 b2 c2 ...]
+    ...
+    
+    Метод прогонки состоит из двух этапов:
+    1. Прямой ход: вычисляем коэффициенты P и Q
+    2. Обратный ход: находим решение x
+    """
+    # n - размерность системы
     n = len(A)
     
     if logger:
         logger.log_matrix("Трехдиагональная матрица A", A)
         logger.log_matrix("Вектор правых частей b", b)
     
-    # Forward (прямой ход)
+    # Forward (прямой ход) - вычисляем прогоночные коэффициенты
+    # P и Q - массивы коэффициентов размером n
     P = [0 for _ in range(n)]
     Q = [0 for _ in range(n)]
     
-    P[0] = A[0][1] / -A[0][0]
+    # Начальные значения (для первой строки)
+    # P[0] = -c0/b0, где c0 = A[0][1], b0 = A[0][0]
+    P[0] = -A[0][1] / A[0][0]
+    # Q[0] = d0/b0, где d0 = b[0]
     Q[0] = b[0] / A[0][0]
     
     if logger:
@@ -32,9 +48,14 @@ def tridiagonal_solve(A, b, logger=None):
             "Формула Q[0]": f"{b[0]} / {A[0][0]} = {Q[0]}"
         })
     
+    # Вычисляем P[i] и Q[i] для средних строк (от 1 до n-2)
     for i in range(1, n-1):
+        # Знаменатель для формул прогонки
+        # denominator = -b_i - a_i * P[i-1]
         denominator = -A[i][i] - A[i][i-1] * P[i-1]
+        # P[i] = c_i / denominator
         P[i] = A[i][i+1] / denominator
+        # Q[i] = (a_i * Q[i-1] - d_i) / denominator
         Q[i] = (A[i][i-1] * Q[i-1] - b[i]) / denominator
         
         if logger:
@@ -47,7 +68,9 @@ def tridiagonal_solve(A, b, logger=None):
                 f"Формула Q[{i}]": f"({A[i][i-1]} * {Q[i-1]} - {b[i]}) / {denominator} = {Q[i]}"
             })
     
+    # Для последней строки P[n-1] = 0 (нет элемента справа)
     P[n-1] = 0
+    # Q[n-1] вычисляем по той же формуле
     Q[n-1] = (A[n-1][n-2] * Q[n-2] - b[n-1]) / (-A[n-1][n-1] - A[n-1][n-2] * P[n-2])
     
     if logger:
@@ -59,8 +82,9 @@ def tridiagonal_solve(A, b, logger=None):
             "Массив Q": Q
         })
 
-    # Backward (обратный ход)
-    x = [0 for _ in range(n)]
+    # Backward (обратный ход) - вычисляем решение x
+    x = [0 for _ in range(n)]  # Вектор решения
+    # Последний элемент x[n-1] = Q[n-1] (т.к. P[n-1] = 0)
     x[n-1] = Q[n-1]
     
     if logger:
@@ -69,7 +93,9 @@ def tridiagonal_solve(A, b, logger=None):
             f"x[{n-1}]": x[n-1]
         })
     
+    # Идем снизу вверх (от i=n-1 до i=1)
     for i in range(n-1, 0, -1):
+        # Формула обратной прогонки: x[i-1] = P[i-1] * x[i] + Q[i-1]
         x[i-1] = P[i-1] * x[i] + Q[i-1]
         
         if logger:
@@ -82,39 +108,40 @@ def tridiagonal_solve(A, b, logger=None):
     return x
 
 
-# Инициализация логгера
-logger = IterationLogger("Метод_прогонки")
+if __name__ == "__main__":
+    # Инициализация логгера
+    logger = IterationLogger("Метод_прогонки")
 
-# Создаем полную матрицу из диагоналей
-n = 5
-A = [[0 for _ in range(n)] for _ in range(n)]
-for i in range(n):
-    A[i][i] = TRIDIAG_B[i]
-    if i > 0:
-        A[i][i-1] = TRIDIAG_A[i]
-    if i < n - 1:
-        A[i][i+1] = TRIDIAG_C[i]
+    # Создаем полную матрицу из диагоналей
+    n = 5
+    A = [[0 for _ in range(n)] for _ in range(n)]
+    for i in range(n):
+        A[i][i] = TRIDIAG_B[i]
+        if i > 0:
+            A[i][i-1] = TRIDIAG_A[i]
+        if i < n - 1:
+            A[i][i+1] = TRIDIAG_C[i]
 
-b = TRIDIAG_D.tolist()
+    b = TRIDIAG_D.tolist()
 
-# Решение методом прогонки
-x = tridiagonal_solve(A, b, logger)
+    # Решение методом прогонки
+    x = tridiagonal_solve(A, b, logger)
 
-# Проверка результатов
-import numpy as np
-A_np = np.array(A)
-b_np = np.array(b)
-x_np = np.array(x)
+    # Проверка результатов
+    import numpy as np
+    A_np = np.array(A)
+    b_np = np.array(b)
+    x_np = np.array(x)
 
-# Финальные результаты
-final_results = {
-    "Решение x": x,
-    "Проверка ||Ax - b||": float(np.linalg.norm(A_np @ x_np - b_np)),
-    "Размерность системы": n,
-    "Метод": "Прогонка"
-}
+    # Финальные результаты
+    final_results = {
+        "Решение x": x,
+        "Проверка ||Ax - b||": float(np.linalg.norm(A_np @ x_np - b_np)),
+        "Размерность системы": n,
+        "Метод": "Прогонка"
+    }
 
-logger.log_final_result(final_results)
-print_final_summary("Метод прогонки", final_results)
+    logger.log_final_result(final_results)
+    print_final_summary("Метод прогонки", final_results)
 
-print(f"\nПодробный лог сохранен в: {logger.get_log_file_path()}")
+    print(f"\nПодробный лог сохранен в: {logger.get_log_file_path()}")

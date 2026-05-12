@@ -12,6 +12,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 from typing import Callable, Tuple
 from scipy.optimize import fsolve
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from task1_lu_decomposition import LU_decompose, solve_system as lu_solve_system
 
 
 class BoundaryProblemSolver:
@@ -20,13 +25,38 @@ class BoundaryProblemSolver:
     def __init__(self, a: float, b: float, h: float):
         """
         a, b: границы отрезка
-        h: шаг сетки
+        h: шаг сетки (должен быть таким, чтобы (b-a)/h было целым)
         """
         self.a = a
         self.b = b
         self.h = h
-        self.n = int((b - a) / h) + 1
+        
+        # интервалы
+        N = (b - a) / h
+        if abs(N - round(N)) > 1e-12:
+            raise ValueError(f"h={h} не делит отрезок [{a}, {b}] на целое число интервалов. "
+                            f"(b-a)/h = {N}")
+        
+        self.N = int(round(N))  # количество интервалов
+        self.n = self.N + 1     # количество узлов
         self.x = np.linspace(a, b, self.n)
+    
+    def solve_with_LU(self, A: np.ndarray, b_vec: np.ndarray) -> np.ndarray:
+        """
+        Решение системы с использованием LU-разложения (из lab1)
+        Используется когда матрица не трехдиагональная
+        """
+        # Преобразуем numpy массивы в списки для LU_decompose
+        A_list = A.tolist()
+        b_list = b_vec.tolist()
+        
+        # LU разложение
+        L, U, P, swaps = LU_decompose(A_list)
+        
+        # Решаем систему
+        x = lu_solve_system(L, U, b_list, P)
+        
+        return np.array(x)
     
     def shooting_method(self, f_system: Callable, bc_left: Tuple, bc_right: Callable,
                        initial_guess: float = 0.0, tol: float = 1e-6, max_iter: int = 50,
@@ -137,70 +167,81 @@ class BoundaryProblemSolver:
         return self.x, y_curr[:, 0]
     
     def finite_difference_method(self, p: Callable, q: Callable, f: Callable,
-                                bc_left: Tuple, bc_right: Tuple) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Конечно-разностный метод для уравнения y'' + p(x)y' + q(x)y = f(x)
-        bc_left: левое граничное условие (тип, коэффициенты, значение)
-        bc_right: правое граничное условие (тип, коэффициенты, значение)
-        """
+                            bc_left: Tuple, bc_right: Tuple,
+                            use_tridiagonal: bool = True) -> Tuple[np.ndarray, np.ndarray]:
         n = self.n
+        
+        # Массивы для трехдиагональной системы
+        lower = np.zeros(n)  # a_i - поддиагональ
+        main = np.zeros(n)   # b_i - главная диагональ
+        upper = np.zeros(n)  # c_i - наддиагональ
+        rhs = np.zeros(n)    # правая часть
+        
+        # Полная матрица (для LU)
         A = np.zeros((n, n))
-        b = np.zeros(n)
+        b_vec = np.zeros(n)
         
-        # Левое граничное условие
-        if bc_left[0] == 'derivative':
-            # y'(a) = value: используем одностороннюю разность
-            # (-3y_0 + 4y_1 - y_2) / (2h) = value
-            A[0, 0] = -3 / (2*self.h)
-            A[0, 1] = 4 / (2*self.h)
-            A[0, 2] = -1 / (2*self.h)
-            b[0] = bc_left[1]
-        elif bc_left[0] == 'mixed':
-            # alpha*y(a) + beta*y'(a) = value
-            alpha, beta, value = bc_left[1], bc_left[2], bc_left[3]
-            A[0, 0] = alpha - 3*beta / (2*self.h)
-            A[0, 1] = 4*beta / (2*self.h)
-            A[0, 2] = -beta / (2*self.h)
-            b[0] = value
-        else:  # 'value'
-            A[0, 0] = 1
-            b[0] = bc_left[1]
+        # ЛЕВОЕ ГРАНИЧНОЕ УСЛОВИЕ: y'(0) = 1
+        # Используем одностороннюю разность 1-го порядка для прогонки
+        main[0] = -1 / self.h      # y1 - y0 / h
+        upper[0] = 1 / self.h      # коэффициент при y1
+        rhs[0] = 1                 # правая часть
         
-        # Внутренние точки: y''_i + p(x_i)y'_i + q(x_i)y_i = f(x_i)
-        # y''_i ≈ (y_{i+1} - 2y_i + y_{i-1}) / h^2
-        # y'_i ≈ (y_{i+1} - y_{i-1}) / (2h)
+        # Для полной матрицы коэф при аппроксимации такие
+        A[0, 0] = -3 / (2*self.h)
+        A[0, 1] = 4 / (2*self.h)
+        A[0, 2] = -1 / (2*self.h)
+        b_vec[0] = 1
+        
+        # ВНУТРЕННИЕ УЗЛЫ
         for i in range(1, n-1):
             xi = self.x[i]
             pi = p(xi)
             qi = q(xi)
             fi = f(xi)
             
-            A[i, i-1] = 1/self.h**2 - pi/(2*self.h)
-            A[i, i] = -2/self.h**2 + qi
-            A[i, i+1] = 1/self.h**2 + pi/(2*self.h)
-            b[i] = fi
+            # y'' + p(x)y' + q(x)y = f(x)
+            # Аппроксимация: (y_{i+1}-2y_i+y_{i-1})/h^2 + p_i*(y_{i+1}-y_{i-1})/(2h) + q_i*y_i = f_i
+            lower[i] = 1/self.h**2 - pi/(2*self.h)
+            main[i] = -2/self.h**2 + qi
+            upper[i] = 1/self.h**2 + pi/(2*self.h)
+            rhs[i] = fi
+            
+            A[i, i-1] = lower[i]
+            A[i, i] = main[i]
+            A[i, i+1] = upper[i]
+            b_vec[i] = fi
         
-        # Правое граничное условие
-        if bc_right[0] == 'derivative':
-            # y'(b) = value: используем одностороннюю разность
-            # (y_{n-3} - 4y_{n-2} + 3y_{n-1}) / (2h) = value
-            A[n-1, n-3] = 1 / (2*self.h)
-            A[n-1, n-2] = -4 / (2*self.h)
-            A[n-1, n-1] = 3 / (2*self.h)
-            b[n-1] = bc_right[1]
-        elif bc_right[0] == 'mixed':
-            # alpha*y(b) + beta*y'(b) = value
-            alpha, beta, value = bc_right[1], bc_right[2], bc_right[3]
-            A[n-1, n-3] = beta / (2*self.h)
-            A[n-1, n-2] = -4*beta / (2*self.h)
-            A[n-1, n-1] = alpha + 3*beta / (2*self.h)
-            b[n-1] = value
-        else:  # 'value'
-            A[n-1, n-1] = 1
-            b[n-1] = bc_right[1]
+        # ПРАВОЕ ГРАНИЧНОЕ УСЛОВИЕ: y'(1) - y(1) = 1
+        # Для прогонки используем 1-й порядок: (y_n - y_{n-1})/h - y_n = 1
+        # -y_{n-1}/h + (1/h - 1)*y_n = 1
+        lower[n-1] = -1 / self.h
+        main[n-1] = 1/self.h - 1
+        upper[n-1] = 0
+        rhs[n-1] = 1
         
-        # Решаем систему
-        y = np.linalg.solve(A, b)
+        # Для полной матрицы используем 2-й порядок
+        A[n-1, n-3] = 1 / (2*self.h)
+        A[n-1, n-2] = -4 / (2*self.h)
+        A[n-1, n-1] = 3 / (2*self.h) - 1  # с учетом условия -y(1)
+        b_vec[n-1] = 1
+        
+        if use_tridiagonal:
+            # Метод прогонки
+            # Прямой ход
+            for i in range(1, n):
+                factor = lower[i] / main[i-1]
+                main[i] -= factor * upper[i-1]
+                rhs[i] -= factor * rhs[i-1]
+            
+            # Обратный ход
+            y = np.zeros(n)
+            y[n-1] = rhs[n-1] / main[n-1]
+            for i in range(n-2, -1, -1):
+                y[i] = (rhs[i] - upper[i] * y[i+1]) / main[i]
+        else:
+            # LU разложение
+            y = self.solve_with_LU(A, b_vec)
         
         return self.x, y
 
@@ -282,9 +323,9 @@ def problem_variant_14():
         )
         
         # Метод конечных разностей
-        print("--- Конечно-разностный метод ---")
+        print("\n--- Конечно-разностный метод (LU-разложение) ---")
         x_fd, y_fd = solver.finite_difference_method(
-            p, q, f, bc_left_fd, bc_right_fd
+            p, q, f, bc_left_fd, bc_right_fd, use_tridiagonal=False
         )
         
         # Вычисление погрешностей

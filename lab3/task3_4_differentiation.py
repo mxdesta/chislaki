@@ -40,20 +40,20 @@ def first_derivative_central(x: np.ndarray, y: np.ndarray, i: int) -> float:
             (2x - x_i - x_{i+1})
     """
     if i == 0:
-        # Используем точки i, i+1, i+2
+        # Используем точки i, i+1, i+2 # точки первые крайние (левые)
         h1 = x[i + 1] - x[i]
         h2 = x[i + 2] - x[i + 1]
         f1 = (y[i + 1] - y[i]) / h1
         f2 = (y[i + 2] - y[i + 1]) / h2
         return f1 + ((f2 - f1) / (x[i + 2] - x[i])) * (2 * x[i] - x[i] - x[i + 1])
-    elif i == len(x) - 1:
+    elif i == len(x) - 1: # точки справа крайние
         # Используем точки i-2, i-1, i
         h1 = x[i - 1] - x[i - 2]
         h2 = x[i] - x[i - 1]
         f1 = (y[i - 1] - y[i - 2]) / h1
         f2 = (y[i] - y[i - 1]) / h2
         return f2 + ((f2 - f1) / (x[i] - x[i - 2])) * (2 * x[i] - x[i - 1] - x[i])
-    else:
+    else: #основные точки в середине
         # Используем точки i-1, i, i+1
         h1 = x[i] - x[i - 1]
         h2 = x[i + 1] - x[i]
@@ -68,6 +68,7 @@ def second_derivative(x: np.ndarray, y: np.ndarray, i: int) -> float:
     
     y''(x) ≈ 2 * [((y_{i+1} - y_i)/(x_{i+1} - x_i) - (y_i - y_{i-1})/(x_i - x_{i-1})) / (x_{i+1} - x_{i-1})]
     """
+    #аналогично поделили
     if i == 0:
         # Используем точки 0, 1, 2
         h1 = x[1] - x[0]

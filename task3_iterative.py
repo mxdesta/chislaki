@@ -10,23 +10,38 @@ from utils.logger import IterationLogger, print_final_summary
 
 
 def L1_norm(X):
-    """Вычисление L1 нормы"""
-    n = X.shape[0]
-    if type(X[0]) == np.ndarray:
-        l2_norm = abs(X[0][0])
-        for i in range(n):
-            for j in range(n):
-                l2_norm = max(abs(X[i][j]), l2_norm)
-    else:
-        l2_norm = abs(X[0])
-        for i in range(n):
-            l2_norm = max(abs(X[i]), l2_norm)
-    return l2_norm
+    """Вычисление L1 нормы
+    
+    Для вектора: ||x||₁ = Σ|x_i|
+    Для матрицы: ||A||₁ = max по j (Σ|a_ij|) — максимум суммы модулей по столбцам
+    """
+    if X.ndim == 1:  # Вектор
+        norm = 0
+        for i in range(len(X)):
+            norm += abs(X[i])
+        return norm
+    else:  # Матрица
+        n = X.shape[1]  # Количество столбцов
+        max_col_sum = 0
+        for j in range(n):  # Идем по столбцам
+            col_sum = 0
+            for i in range(n):  # Суммируем по строкам в столбце j
+                col_sum += abs(X[i][j])
+            if col_sum > max_col_sum:
+                max_col_sum = col_sum
+        return max_col_sum
 
 
 def solve_iterative(A, b, eps, logger=None):
-    """Метод простых итераций"""
-    n = A.shape[0]
+    """Метод простых итераций
+    
+    Преобразуем систему Ax = b к виду x = αx + β
+    где α = -A/diag(A), β = b/diag(A)
+    
+    Итерационная формула: x^(k+1) = α × x^(k) + β
+    """
+    n = A.shape[0]  # Размерность системы
+    # Создаем матрицу α и вектор β
     alpha = np.zeros_like(A, dtype='float')
     beta = np.zeros_like(b, dtype='float')
 
@@ -34,9 +49,12 @@ def solve_iterative(A, b, eps, logger=None):
     for i in range(n):
         for j in range(n):
             if i == j:
+                # Диагональные элементы α равны 0
                 alpha[i][j] = 0
             else:
+                # Внедиагональные: α_ij = -a_ij / a_ii
                 alpha[i][j] = -A[i][j] / A[i][i]
+        # β_i = b_i / a_ii
         beta[i] = b[i] / A[i][i]
 
     if logger:
@@ -47,19 +65,25 @@ def solve_iterative(A, b, eps, logger=None):
             "Условие сходимости": f"||alpha|| = {L1_norm(alpha)} < 1: {L1_norm(alpha) < 1}"
         })
 
-    iterations = 0
-    cur_x = np.copy(beta)
-    converge = False
+    # Итерационный процесс
+    iterations = 0  # Счетчик итераций
+    cur_x = np.copy(beta)  # Начальное приближение x^(0) = β
+    converge = False  # Флаг сходимости
     
     while not converge:
-        prev_x = np.copy(cur_x)
+        prev_x = np.copy(cur_x)  # Сохраняем предыдущее значение x^(k)
+        # Вычисляем новое приближение: x^(k+1) = α × x^(k) + β
         cur_x = alpha @ prev_x + beta
-        iterations += 1
+        iterations += 1  # Увеличиваем счетчик
         
+        # Проверка сходимости
         if L1_norm(alpha) < 1:
+            # Если ||α|| < 1, используем апостериорную оценку погрешности
+            # ||x* - x^(k)|| ≤ ||α|| / (1 - ||α||) × ||x^(k) - x^(k-1)||
             error_estimate = L1_norm(alpha) / (1 - L1_norm(alpha)) * L1_norm(cur_x - prev_x)
-            converge = error_estimate <= eps
+            converge = error_estimate <= eps  # Сходимость, если оценка ≤ eps
         else:
+            # Если ||α|| ≥ 1, просто проверяем разность соседних приближений
             converge = L1_norm(cur_x - prev_x) <= eps
         
         if logger and (iterations <= 5 or iterations % 5 == 0):
@@ -76,21 +100,33 @@ def solve_iterative(A, b, eps, logger=None):
 
 
 def seidel_multiplication(alpha, x, beta):
-    """Шаг итерации метода Зейделя"""
-    res = np.copy(x)
-    c = np.copy(alpha)
+    """Шаг итерации метода Зейделя
+    
+    Отличие от простых итераций: используем уже вычисленные на текущей итерации значения
+    x_i^(k+1) = β_i + Σ(j<i) α_ij × x_j^(k+1) + Σ(j>i) α_ij × x_j^(k)
+    """
+    res = np.copy(x)  # Результат текущей итерации
+    c = np.copy(alpha)  # Копия матрицы α для вычисления нормы
+    # Проходим по всем элементам вектора
     for i in range(alpha.shape[0]):
-        res[i] = beta[i]
+        res[i] = beta[i]  # Начинаем с β_i
+        # Суммируем α_ij × x_j
         for j in range(alpha.shape[1]):
-            res[i] += alpha[i][j] * res[j]
+            res[i] += alpha[i][j] * res[j]  # Используем res[j] - уже обновленные значения!
             if j < i:
+                # Обнуляем нижнюю часть для вычисления нормы c
                 c[i][j] = 0
     return res, c
 
 
 def solve_seidel(A, b, eps, logger=None):
-    """Метод Зейделя"""
+    """Метод Зейделя (модификация метода простых итераций)
+    
+    Преимущество: быстрее сходится, т.к. использует обновленные значения
+    на текущей итерации
+    """
     n = A.shape[0]
+    # Создаем те же α и β, что и в методе простых итераций
     alpha = np.zeros_like(A, dtype='float')
     beta = np.zeros_like(b, dtype='float')
     
@@ -106,15 +142,18 @@ def solve_seidel(A, b, eps, logger=None):
         logger.log_matrix("Матрица alpha", alpha)
         logger.log_matrix("Вектор beta", beta)
 
+    # Итерационный процесс (аналогично простым итерациям)
     iterations = 0
-    cur_x = np.copy(beta)
+    cur_x = np.copy(beta)  # Начальное приближение
     converge = False
     
     while not converge:
         prev_x = np.copy(cur_x)
+        # Используем специальную функцию для шага Зейделя
         cur_x, c = seidel_multiplication(alpha, prev_x, beta)
         iterations += 1
         
+        # Проверка сходимости (аналогично простым итерациям, но с матрицей c)
         if L1_norm(alpha) < 1:
             error_estimate = L1_norm(c) / (1 - L1_norm(alpha)) * L1_norm(cur_x - prev_x)
             converge = error_estimate <= eps

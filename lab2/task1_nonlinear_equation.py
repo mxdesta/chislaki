@@ -29,7 +29,7 @@ def d2f(x: float) -> float:
 
 
 def plot_function():
-    """Графическое определение начального приближения (отделение корней)"""
+    """графически определеяем корни"""
     x = np.linspace(-3, 5, 1000)
     y = [f(xi) for xi in x]
     
@@ -83,8 +83,8 @@ def newton_method(x0: float, epsilon: float, max_iter: int = 1000) -> Tuple[floa
     table_data = []
     x = x0
     
-    # Проверка условия (2.3)
-    print(f"\nПроверка условия сходимости (2.3):")
+    # Проверка условия сходимости
+    print(f"\nПроверка условия сходимости:")
     print(f"f({x0}) = {f(x0):.4f}")
     print(f"f''({x0}) = {d2f(x0):.4f}")
     print(f"f(x⁽⁰⁾)·f''(x⁽⁰⁾) = {f(x0) * d2f(x0):.4f} > 0 ✓")
@@ -137,8 +137,11 @@ def simple_iteration_method(x0: float, epsilon: float, max_iter: int = 1000) -> 
     φ(x) = x - 0.05·(x³ - 2x² - 10x + 15)
     φ'(x) = 1 - 0.05·(3x² - 4x - 10)
     """
-    # Параметр λ для обеспечения сходимости
-    lambda_param = 0.05
+    print(f"min на нашем интервале - {df(3.5)}" )
+    print(f"max на нашем интервале - {df(4)}" )
+    sred =  (df(3.5) + df(4)) / 2 # берем среднее
+    lambda_param = 1 / sred
+    print(lambda_param) # получилось около 0.05 там
     
     def phi(x):
         return x - lambda_param * f(x)
@@ -155,6 +158,19 @@ def simple_iteration_method(x0: float, epsilon: float, max_iter: int = 1000) -> 
     print(f"Параметр λ = {lambda_param}")
     print(f"Преобразование: φ(x) = x - {lambda_param}·f(x)")
     print(f"Проверка условия сходимости: |φ'({x0})| = {abs(dphi(x0)):.4f} < 1 ✓")
+
+    x_interval = np.linspace(max(0, x0 - 0.5), x0 + 0.5, 100)
+    q = max(abs(dphi(xi)) for xi in x_interval)
+    
+    # Проверяем условие сходимости: q < 1
+    print(f"Коэффициент сжатия q = max|φ'(x)| = {q:.4f}")
+    print(f"Проверка условия сходимости: q = {q:.4f} < 1 ✓")
+    
+    # Если q >= 1, метод не сойдется
+    if q >= 1:
+        print(f"ВНИМАНИЕ: q >= 1, метод может не сойтись!")
+        print(f"Рекомендуется уменьшить λ или выбрать другое преобразование")
+    
     
     for i in range(max_iter):
         phi_x = phi(x)
@@ -164,7 +180,6 @@ def simple_iteration_method(x0: float, epsilon: float, max_iter: int = 1000) -> 
         iterations.append(x_new)
         
         # Оценка погрешности
-        q = abs(dphi(x))
         estimated_error = (q / (1 - q)) * error if q < 1 else float('inf')
         
         table_data.append({

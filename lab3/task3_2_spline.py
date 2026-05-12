@@ -12,115 +12,160 @@ yi | 0.0 | 0.72235| 1.5609 | 2.8459 | 7.7275
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Tuple, List
+import sys
+import os
+
+# Добавляем путь для импорта из chislaki
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Импортируем функции LU разложения из task1
+from task1_lu_decomposition import LU_decompose, solve_system
 
 
-def solve_tridiagonal(a: np.ndarray, b: np.ndarray, c: np.ndarray, d: np.ndarray) -> np.ndarray:
+def solve_tridiagonal_with_lu(a: np.ndarray, b: np.ndarray, c: np.ndarray, d: np.ndarray) -> np.ndarray:
     """
-    Решение трехдиагональной системы методом прогонки
+    Решение трехдиагональной системы с использованием LU разложения
+    
+    Система имеет вид:
     a[i]*x[i-1] + b[i]*x[i] + c[i]*x[i+1] = d[i]
+    
+    Args:
+        a: нижняя диагональ (коэффициенты при x[i-1])
+        b: главная диагональ (коэффициенты при x[i])
+        c: верхняя диагональ (коэффициенты при x[i+1])
+        d: правая часть системы
+    
+    Returns:
+        Решение системы x
     """
     n = len(d)
-    c_prime = np.zeros(n - 1)
-    d_prime = np.zeros(n)
-    x = np.zeros(n)
     
-    # Прямой ход
-    c_prime[0] = c[0] / b[0]
-    d_prime[0] = d[0] / b[0]
+    # Создаем полную матрицу из трех диагоналей
+    A_matrix = [[0.0 for _ in range(n)] for _ in range(n)]
     
-    for i in range(1, n - 1):
-        denom = b[i] - a[i] * c_prime[i - 1]
-        c_prime[i] = c[i] / denom
-        d_prime[i] = (d[i] - a[i] * d_prime[i - 1]) / denom
+    # Заполняем главную диагональ
+    for i in range(n):
+        A_matrix[i][i] = b[i]
     
-    d_prime[n - 1] = (d[n - 1] - a[n - 1] * d_prime[n - 2]) / (b[n - 1] - a[n - 1] * c_prime[n - 2])
+    # Заполняем верхнюю диагональ (кроме последнего элемента)
+    for i in range(n - 1):
+        A_matrix[i][i + 1] = c[i]
     
-    # Обратный ход
-    x[n - 1] = d_prime[n - 1]
-    for i in range(n - 2, -1, -1):
-        x[i] = d_prime[i] - c_prime[i] * x[i + 1]
+    # Заполняем нижнюю диагональ (кроме первого элемента)
+    for i in range(1, n):
+        A_matrix[i][i - 1] = a[i]
     
-    return x
+    # Преобразуем вектор d в список
+    d_list = d.tolist() if isinstance(d, np.ndarray) else list(d)
+    
+    # Используем LU разложение для решения системы
+    L, U, P, swaps = LU_decompose(A_matrix)
+    x = solve_system(L, U, d_list, P)
+    
+    return np.array(x)
 
 
 def build_cubic_spline(x_nodes: np.ndarray, y_nodes: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Построение кубического сплайна с нулевой кривизной на концах
+    n = len(x_nodes) - 1  # количество интервалов (n интервалов для n+1 узлов)
     
-    S(x) = a_i + b_i(x - x_{i-1}) + c_i(x - x_{i-1})^2 + d_i(x - x_{i-1})^3
-    для x ∈ [x_{i-1}, x_i], i = 1,...,n
+    # Вычисляем шаги между узлами: h_i = x_i - x_{i-1}
+    h = np.diff(x_nodes)  # h[0] = x_1 - x_0, ..., h[n-1] = x_n - x_{n-1}
     
-    Возвращает: (a, b, c, d) - коэффициенты сплайнов
-    """
-    n = len(x_nodes)
-    h = np.diff(x_nodes)  # h_i = x_i - x_{i-1}
     
-    # Построение системы для нахождения c_i (i = 2,...,n)
-    # Система имеет размерность (n-1) x (n-1)
-    # n - это количество узлов, количество интервалов = n-1
-    num_intervals = n - 1
-    system_size = num_intervals - 1  # размер системы для c_2, ..., c_n
+    if n == 1:
+        # Только один интервал - вырожденный случай
+        # c_1 = c_2 = 0 (оба граничных условия)
+        c_full = np.zeros(2) 
+    else:
+        
+        system_size = n - 1  
+        
+        A = np.zeros(system_size)  # нижняя диагональ
+        B = np.zeros(system_size)  # главная диагональ
+        C = np.zeros(system_size)  # верхняя диагональ
+        D = np.zeros(system_size)  # правая часть
+        
+        # Уравнения системы (3.13):
+        # h_{i-1}*c_{i-1} + 2(h_{i-1} + h_i)*c_i + h_i*c_{i+1} = 3[(f_i - f_{i-1})/h_i - (f_{i-1} - f_{i-2})/h_{i-1}]
+        # для i = 2, 3, ..., n-1
+        
+        B[0] = 2 * (h[0] + h[1])
+        if system_size > 1:
+            C[0] = h[1]
+        D[0] = 3 * ((y_nodes[2] - y_nodes[1]) / h[1] - (y_nodes[1] - y_nodes[0]) / h[0])
+        
+        # Средние уравнения (для c_3, ..., c_{n-1})
+        for i in range(1, system_size - 1):
+            # Уравнение для c_{i+1} (индекс i+1 в массиве c, т.к. c_1=0)
+            A[i] = h[i]  # коэффициент при c_i
+            B[i] = 2 * (h[i] + h[i + 1])  # коэффициент при c_{i+1}
+            C[i] = h[i + 1]  # коэффициент при c_{i+2}
+            D[i] = 3 * ((y_nodes[i + 2] - y_nodes[i + 1]) / h[i + 1] - 
+                        (y_nodes[i + 1] - y_nodes[i]) / h[i])
+        
+        # Последнее уравнение (для c_n):
+        # h_{n-1}*c_{n-1} + 2(h_{n-1} + h_n)*c_n = 3[(f_n - f_{n-1})/h_n - (f_{n-1} - f_{n-2})/h_{n-1}]
+        if system_size > 1:
+            A[system_size - 1] = h[n - 2]
+            B[system_size - 1] = 2 * (h[n - 2] + h[n - 1])
+            # C[system_size - 1] = 0 (т.к. c_{n+1} = 0 из граничного условия)
+            D[system_size - 1] = 3 * ((y_nodes[n] - y_nodes[n - 1]) / h[n - 1] - 
+                                      (y_nodes[n - 1] - y_nodes[n - 2]) / h[n - 2])
+        
+        # Решаем трехдиагональную систему
+        c_inner = solve_tridiagonal_with_lu(A, B, C, D)
+        
+        c_full = np.zeros(n + 1)
+        c_full[1:n] = c_inner  # c_inner содержит c_2, ..., c_n
+
+    # Возвращаем коэффициенты для n интервалов
     
-    A = np.zeros(system_size)  # нижняя диагональ
-    B = np.zeros(system_size)  # главная диагональ
-    C = np.zeros(system_size)  # верхняя диагональ
-    D = np.zeros(system_size)  # правая часть
-    
-    # Первое уравнение: 2(h_1 + h_2)c_2 + h_2*c_3 = 3[(f_2-f_1)/h_2 - (f_1-f_0)/h_1]
-    B[0] = 2 * (h[0] + h[1])
-    if system_size > 1:
-        C[0] = h[1]
-    D[0] = 3 * ((y_nodes[2] - y_nodes[1]) / h[1] - (y_nodes[1] - y_nodes[0]) / h[0])
-    
-    # Средние уравнения
-    for i in range(1, system_size - 1):
-        A[i] = h[i]
-        B[i] = 2 * (h[i] + h[i + 1])
-        C[i] = h[i + 1]
-        D[i] = 3 * ((y_nodes[i + 2] - y_nodes[i + 1]) / h[i + 1] - 
-                    (y_nodes[i + 1] - y_nodes[i]) / h[i])
-    
-    # Последнее уравнение
-    if system_size > 1:
-        A[system_size - 1] = h[system_size - 1]
-        B[system_size - 1] = 2 * (h[system_size - 1] + h[system_size])
-        D[system_size - 1] = 3 * ((y_nodes[system_size + 1] - y_nodes[system_size]) / h[system_size] - 
-                        (y_nodes[system_size] - y_nodes[system_size - 1]) / h[system_size - 1])
-    
-    # Решаем систему для c_2, ..., c_n
-    c_inner = solve_tridiagonal(A, B, C, D)
-    
-    # Формируем полный массив c (c_1 = 0, c_2,...,c_n)
+    a = np.zeros(n)  # a_i = f_{i-1}
+    b = np.zeros(n)
     c = np.zeros(n)
-    c[1:1+len(c_inner)] = c_inner
+    d = np.zeros(n)
     
-    # Вычисляем остальные коэффициенты
-    a = y_nodes[:-1]  # a_i = f_{i-1}, i = 1,...,n
+    for i in range(n):
+        # Интервал i в Python = интервал i+1 в методичке: [x_i, x_{i+1}]
+        a[i] = y_nodes[i]
+        c[i] = c_full[i]  # c[i] = c_{i+1} в методичке
+        
+        if i < n - 1:
+            # b_i = (f_i - f_{i-1})/h_i - (1/3)*h_i*(c_{i+1} + 2*c_i)
+            # d_i = (c_{i+1} - c_i) / (3*h_i)
+            b[i] = (y_nodes[i + 1] - y_nodes[i]) / h[i] - h[i] * (c_full[i + 1] + 2 * c_full[i]) / 3
+            d[i] = (c_full[i + 1] - c_full[i]) / (3 * h[i])
+        else:
+
+            # b_n = (f_n - f_{n-1})/h_n - (2/3)*h_n*c_n
+            # d_n = -c_n/(3*h_n)
+            # где c_n = c_full[n-1] (c_n для последнего интервала)
+            c_n = c_full[n - 1]  # c_n для последнего интервала
+            b[i] = (y_nodes[n] - y_nodes[n - 1]) / h[n - 1] - 2 * h[n - 1] * c_n / 3
+            d[i] = -c_n / (3 * h[n - 1])
     
-    b = np.zeros(n - 1)
-    d = np.zeros(n - 1)
-    
-    for i in range(n - 2):
-        b[i] = (y_nodes[i + 1] - y_nodes[i]) / h[i] - h[i] * (c[i + 1] + 2 * c[i]) / 3
-        d[i] = (c[i + 1] - c[i]) / (3 * h[i])
-    
-    # Последний интервал
-    b[n - 2] = (y_nodes[n - 1] - y_nodes[n - 2]) / h[n - 2] - 2 * h[n - 2] * c[n - 1] / 3
-    d[n - 2] = -c[n - 1] / (3 * h[n - 2])
-    
-    return a, b, c[:-1], d
+    return a, b, c, d
 
 
 def evaluate_spline(x: float, x_nodes: np.ndarray, a: np.ndarray, b: np.ndarray, 
                    c: np.ndarray, d: np.ndarray) -> float:
     """
     Вычисление значения сплайна в точке x
-    """
-    # Находим интервал, которому принадлежит x
-    i = np.searchsorted(x_nodes[1:], x)
     
-    if i >= len(a):
-        i = len(a) - 1
+    Сплайн на интервале [x_{i-1}, x_i] имеет вид:
+    S(x) = a_i + b_i*(x - x_{i-1}) + c_i*(x - x_{i-1})^2 + d_i*(x - x_{i-1})^3
+    """
+    n = len(a)  # количество интервалов
+    
+    # Обработка граничных случаев
+    if x <= x_nodes[0]:
+        i = 0
+    elif x >= x_nodes[-1]:
+        i = n - 1  # последний интервал
+    else:
+        i = np.searchsorted(x_nodes, x, side='right') - 1
+        # i указывает на левый конец интервала, значит интервал [x_i, x_{i+1}]
+        # но коэффициенты a[i], b[i], c[i], d[i] соответствуют интервалу [x_i, x_{i+1}]
     
     # Вычисляем значение сплайна
     dx = x - x_nodes[i]
@@ -195,7 +240,7 @@ def solve_task():
     plt.legend(fontsize=11)
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig('chislaki/lab3/task3_2_spline.png', dpi=150)
+    plt.savefig('task3_2_spline.png', dpi=150)
     print(f"\nГрафик сохранен: task3_2_spline.png")
     
     # Проверка непрерывности в узлах

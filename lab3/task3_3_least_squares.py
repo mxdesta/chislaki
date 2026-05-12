@@ -11,46 +11,132 @@ yi | -1.2689 | 0.0 | 1.2689 | 2.6541 | 4.4856 | 9.9138
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Tuple
+import sys
+import os
+
+# Добавляем путь для импорта из chislaki
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Импортируем функции LU разложения из task1
+from task1_lu_decomposition import LU_decompose, solve_system
+
+
+def solve_linear_system_lu(A: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """
+    Решение СЛАУ с использованием LU-разложения из task1
+    
+    Args:
+        A: матрица коэффициентов (numpy array)
+        b: вектор правой части (numpy array)
+    
+    Returns:
+        Решение системы x (numpy array)
+    """
+    # Преобразуем numpy массивы в списки для совместимости с функциями task1
+    A_list = A.tolist()
+    b_list = b.tolist()
+    
+    # Выполняем LU-разложение
+    L, U, P, swaps = LU_decompose(A_list)
+    
+    # Решаем систему
+    x = solve_system(L, U, b_list, P)
+    
+    return np.array(x)
 
 
 def least_squares_polynomial(x_data: np.ndarray, y_data: np.ndarray, degree: int) -> np.ndarray:
     """
     Построение приближающего многочлена методом наименьших квадратов
     
+    Метод наименьших квадратов (МНК) находит многочлен F_n(x) = Σ a_i x^i,
+    который минимизирует сумму квадратов отклонений от табличных данных:
+    
+    Φ = Σ [F_n(x_j) - y_j]² → min
+    
     Решает нормальную систему МНК:
     Σ a_i Σ x_j^{k+i} = Σ y_j x_j^k, k = 0,1,...,n
     
-    Возвращает коэффициенты [a_0, a_1, ..., a_n]
+    Эта система получается из условия минимума Φ:
+    ∂Φ/∂a_k = 0 для всех k
+    
+    Args:
+        x_data: массив значений x
+        y_data: массив значений y
+        degree: степень приближающего многочлена
+    
+    Returns:
+        Массив коэффициентов [a_0, a_1, ..., a_n]
+        F_n(x) = a_0 + a_1*x + a_2*x² + ... + a_n*x^n
     """
-    N = len(x_data)
-    n = degree
+    N = len(x_data)  # количество точек
+    n = degree       # степень многочлена
     
-    # Формируем матрицу системы и правую часть
-    A = np.zeros((n + 1, n + 1))
-    b = np.zeros(n + 1)
+    # === ФОРМИРОВАНИЕ НОРМАЛЬНОЙ СИСТЕМЫ МНК ===
+    # Матрица системы A и правая часть b
+    A = np.zeros((n + 1, n + 1))  # матрица (n+1) × (n+1)
+    b = np.zeros(n + 1)            # вектор правой части
     
-    for k in range(n + 1):
-        for i in range(n + 1):
+    # Заполняем систему
+    # Уравнение k: Σ a_i Σ x_j^{k+i} = Σ y_j x_j^k
+    for k in range(n + 1):  # номер уравнения (строка матрицы)
+        for i in range(n + 1):  # номер неизвестного (столбец матрицы)
+            # A[k, i] = Σ x_j^{k+i} - сумма степеней x
             A[k, i] = np.sum(x_data**(k + i))
+        
+        # b[k] = Σ y_j x_j^k - правая часть k-го уравнения
         b[k] = np.sum(y_data * x_data**k)
     
-    # Решаем систему
-    coeffs = np.linalg.solve(A, b)
+    # === РЕШЕНИЕ СИСТЕМЫ ===
+    # Решаем систему линейных уравнений A * coeffs = b с использованием LU-разложения
+    coeffs = solve_linear_system_lu(A, b)
     
     return coeffs
 
 
 def evaluate_polynomial(x: np.ndarray, coeffs: np.ndarray) -> np.ndarray:
-    """Вычисление значения многочлена"""
+    """
+    Вычисление значения многочлена
+    
+    F_n(x) = a_0 + a_1*x + a_2*x² + ... + a_n*x^n
+    
+    Args:
+        x: точка или массив точек для вычисления
+        coeffs: коэффициенты многочлена [a_0, a_1, ..., a_n]
+    
+    Returns:
+        Значение многочлена в точке(ах) x
+    """
     result = np.zeros_like(x)
+    
+    # Вычисляем сумму: Σ a_i * x^i
     for i, a in enumerate(coeffs):
         result += a * x**i
+    
     return result
 
 
 def compute_error_sum(x_data: np.ndarray, y_data: np.ndarray, coeffs: np.ndarray) -> float:
-    """Вычисление суммы квадратов ошибок"""
+    """
+    Вычисление суммы квадратов ошибок
+    
+    Φ = Σ [F_n(x_j) - y_j]²
+    
+    Эта величина показывает, насколько хорошо многочлен приближает данные.
+    Чем меньше Φ, тем лучше приближение.
+    
+    Args:
+        x_data: массив значений x
+        y_data: массив значений y (табличные данные)
+        coeffs: коэффициенты приближающего многочлена
+    
+    Returns:
+        Сумма квадратов ошибок Φ
+    """
+    # Вычисляем значения многочлена в точках x_data
     y_approx = evaluate_polynomial(x_data, coeffs)
+    
+    # Вычисляем сумму квадратов отклонений
     return np.sum((y_approx - y_data)**2)
 
 

@@ -13,36 +13,49 @@ EPS = 0.000000000000000001
 
 
 def find_max_upper_element(X):
-    """Находит позицию максимального по модулю элемента в верхнем треугольнике матрицы"""
-    n = X.shape[0]
+    """Находит позицию максимального по модулю элемента в верхнем треугольнике матрицы
+    
+    Ищем среди элементов выше главной диагонали (i < j)
+    """
+    n = X.shape[0]  # Размерность матрицы
+    # Начинаем с элемента [0][1] (первый элемент над диагональю)
     i_max, j_max = 0, 1
     max_elem = abs(X[0][1])
 
+    # Проходим по всем элементам верхнего треугольника
     for i in range(n):
-        for j in range(i + 1, n):
+        for j in range(i + 1, n):  # j > i, т.е. выше диагонали
             if abs(X[i][j]) > max_elem:
-                max_elem = abs(X[i][j])
-                i_max = i
+                max_elem = abs(X[i][j])  # Обновляем максимум
+                i_max = i  # Запоминаем позицию
                 j_max = j
 
     return i_max, j_max
 
 
 def matrix_norm(X):
-    """Норма матрицы"""
+    """Норма матрицы (корень из суммы квадратов внедиагональных элементов)
+    
+    Используется как критерий останова: если норма мала, матрица почти диагональная
+    """
     norm = 0
+    # Суммируем квадраты элементов выше диагонали
     for i in range(len(X[0])):
         for j in range(i + 1, len(X[0])):
             norm += X[i][j] * X[i][j]
-    return np.sqrt(norm)
+    return np.sqrt(norm)  # Возвращаем корень из суммы
 
 
 def rotation_method(A, logger=None):
-    """Вычисляет СЗ и СВ с помощью метода вращений"""
-    n = A.shape[0]
-    A_i = np.copy(A)
-    eigen_vectors = np.eye(n)
-    iterations = 0
+    """Вычисляет собственные значения и собственные векторы методом вращений (Якоби)
+    
+    Идея: последовательно обнуляем внедиагональные элементы с помощью вращений
+    пока матрица не станет почти диагональной
+    """
+    n = A.shape[0]  # Размерность матрицы
+    A_i = np.copy(A)  # Рабочая копия матрицы
+    eigen_vectors = np.eye(n)  # Матрица собственных векторов (изначально единичная)
+    iterations = 0  # Счетчик итераций
 
     if logger:
         logger.log_matrix("Исходная матрица A", A)
@@ -51,21 +64,29 @@ def rotation_method(A, logger=None):
             "Критерий останова": f"норма < {EPS}"
         })
 
+    # Итерационный процесс: пока норма внедиагональных элементов > EPS
     while matrix_norm(A_i) > EPS:
+        # Находим максимальный внедиагональный элемент
         i_max, j_max = find_max_upper_element(A_i)
         
+        # Вычисляем угол поворота φ
         if A_i[i_max][i_max] - A_i[j_max][j_max] == 0:
+            # Если диагональные элементы равны, φ = π/4
             phi = np.pi / 4
         else:
+            # Иначе: φ = 0.5 × arctan(2×a_ij / (a_ii - a_jj))
             phi = 0.5 * np.arctan(2 * A_i[i_max][j_max] / (A_i[i_max][i_max] - A_i[j_max][j_max]))
 
+        # Создаем матрицу вращения U (почти единичная, изменены только 4 элемента)
         U = np.eye(n)
-        U[i_max][j_max] = -np.sin(phi)
-        U[j_max][i_max] = np.sin(phi)
-        U[i_max][i_max] = np.cos(phi)
-        U[j_max][j_max] = np.cos(phi)
+        U[i_max][j_max] = -np.sin(phi)  # Элемент [i][j]
+        U[j_max][i_max] = np.sin(phi)   # Элемент [j][i]
+        U[i_max][i_max] = np.cos(phi)   # Элемент [i][i]
+        U[j_max][j_max] = np.cos(phi)   # Элемент [j][j]
 
+        # Применяем преобразование подобия: A_i = U^T × A_i × U
         A_i = U.T @ A_i @ U
+        # Накапливаем собственные векторы
         eigen_vectors = eigen_vectors @ U
         iterations += 1
 
@@ -82,6 +103,7 @@ def rotation_method(A, logger=None):
                 "Матрица A_i": A_i.copy() if iterations <= 5 else "Слишком большая для лога"
             })
 
+    # Собственные значения = диагональные элементы финальной матрицы
     eigen_values = np.array([A_i[i][i] for i in range(n)])
     
     if logger:
