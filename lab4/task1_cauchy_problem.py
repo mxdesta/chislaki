@@ -24,10 +24,10 @@ def f_system(x: float, y: np.ndarray) -> np.ndarray:
     return np.array([y2, -2*y2 - np.exp(x)*y1])
 
 
-def get_reference_solution(x0: float, x_end: float, y0: List[float], h_ref: float = 0.00001):
-    """Получение эталонного решения с очень маленьким шагом"""
+def get_reference_solution(x0: float, x_end: float, y0: List[float], h_ref: float = 0.0001):
+    """Получение эталонного ('истинного') решения с очень маленьким шагом"""
     solver_ref = ODESolver(f_system, x0, y0, h_ref)
-    x_ref, y_ref = solver_ref.runge_kutta_4(x_end, adaptive=False)
+    x_ref, y_ref, _ = solver_ref.runge_kutta_4(x_end, adaptive=False)
     return x_ref, y_ref
 
 
@@ -40,64 +40,48 @@ class ODESolver:
         self.y0 = np.array(y0, dtype=float)
         self.h = h
     
-    def euler(self, x_end: float, compute_errors: bool = False) -> Tuple[np.ndarray, np.ndarray, List[float]]:
+    def euler(self, x_end: float, y_ref: np.ndarray = None, x_ref: np.ndarray = None) -> Tuple[np.ndarray, np.ndarray, List[float]]:
         """
         Явный метод Эйлера
         
         Возвращает:
         - x: массив узлов
         - y: массив решений
-        - epsilon_k: локальные погрешности на каждом шаге
+        - epsilon_k: глобальные погрешности ε_k = |y_ист - y_k| в каждом узле
         """
         n_steps = int((x_end - self.x0) / self.h) + 1
         x = np.linspace(self.x0, x_end, n_steps)
         y = np.zeros((n_steps, len(self.y0)))
         y[0] = self.y0
         
-        epsilon_k = []  # локальные погрешности
-        
+        # Вычисляем решение методом Эйлера
         for i in range(n_steps - 1):
-            # Текущий шаг
-            y_next = y[i] + self.h * self.f(x[i], y[i])
-            
-            if compute_errors:
-                # Оценка локальной погрешности методом Рунге-Ромберга
-                # Делаем два шага с половинным шагом
-                h_half = self.h / 2
-                
-                # Первый половинный шаг
-                k1_half = self.h/2 * self.f(x[i], y[i])
-                y_half = y[i] + k1_half
-                
-                # Второй половинный шаг
-                k2_half = self.h/2 * self.f(x[i] + h_half, y_half)
-                y_double_half = y_half + k2_half
-                
-                # Оценка погрешности
-                # ε = |y_{h/2,h/2} - y_h| / (2^p - 1) = |y_{h/2,h/2} - y_h|
-                local_error = np.abs(y_double_half[0] - y_next[0])  # делим на (2^1 - 1) = 1
-                epsilon_k.append(local_error)
-            
-            y[i+1] = y_next
+            y[i+1] = y[i] + self.h * self.f(x[i], y[i])
+        
+        # Вычисляем глобальные погрешности ε_k = |y_ист - y_k|
+        epsilon_k = []
+        if y_ref is not None and x_ref is not None:
+            for i in range(n_steps):
+                y_true_at_x = np.interp(x[i], x_ref, y_ref[:, 0])
+                err = abs(y_true_at_x - y[i, 0])
+                epsilon_k.append(err)
         
         return x, y, epsilon_k
     
-    def runge_kutta_4(self, x_end: float, adaptive: bool = True, 
-                      tol: float = 1e-6, h_min: float = 1e-6, h_max: float = 0.5) -> Tuple[np.ndarray, np.ndarray]:
+    def runge_kutta_4(self, x_end: float, adaptive: bool = False, 
+                      tol: float = 1e-6, h_min: float = 1e-6, h_max: float = 0.5) -> Tuple[np.ndarray, np.ndarray, List[float]]:
         """
-        Метод Рунге-Кутты 4-го порядка с контролем шага
-        |K2 - K3| / |K1 - K2|
+        Метод Рунге-Кутты 4-го порядка с контролем шага по параметру θ
+        θ = |K2 - K3| / |K1 - K2|
         - θ < 0.01 => шаг можно увеличить
         - θ > 0.1 => шаг нужно уменьшить
         - 0.01 <= θ <= 0.1 → шаг подходит
+        
+        Возвращает:
+        - x: массив узлов
+        - y: массив решений
+        - theta_values: локальные погрешности θ на каждом шаге (если adaptive=True)
         """
-        points_x = [self.x0]
-        points_y = [self.y0.copy()]
-        
-        x = self.x0
-        y = self.y0.copy()
-        h = self.h
-        
         if not adaptive:
             # Стандартный РК4 с фиксированным шагом
             n_steps = int((x_end - self.x0) / self.h) + 1
@@ -112,23 +96,24 @@ class ODESolver:
                 k4 = self.h * self.f(x_vals[i] + self.h, y_vals[i] + k3)
                 y_vals[i+1] = y_vals[i] + (k1 + 2*k2 + 2*k3 + k4) / 6
             
-            return x_vals, y_vals
+            return x_vals, y_vals, []
         
-        # Адаптивный РК4 с контролем шага
+        # Адаптивный РК4 с контролем шага по θ
+        points_x = [self.x0]
+        points_y = [self.y0.copy()]
+        
+        x = self.x0
+        y = self.y0.copy()
+        h = self.h
+        
         print(f"\nАдаптивный метод Рунге-Кутты 4-го порядка")
+        print(f"Контроль точности по параметру θ = |K2-K3| / |K1-K2|")
         print(f"Начальный шаг: h = {h}")
-        print("-" * 60)
-        
-        def vector_norm(vec):
-            """Вычисление евклидовой нормы вектора"""
-            sum_sq = 0.0
-            for component in vec:
-                sum_sq += component ** 2
-            return np.sqrt(sum_sq)
+        print("-" * 70)
         
         step_count = 0
         rejected_steps = 0
-        theta_values = []  # для хранения значений θ
+        theta_values = []  # локальные погрешности θ на каждом шаге
         
         while x < x_end - 1e-12:
             if h < h_min:
@@ -143,51 +128,45 @@ class ODESolver:
             K3 = self.f(x + h/2, y + (h/2) * K2)
             K4 = self.f(x + h, y + h * K3)
             
-            # Расчет параметра θ
-            K1_arr = np.array(K1)
-            K2_arr = np.array(K2)
-            K3_arr = np.array(K3)
-            
-            diff_K2_K3 = vector_norm(K2_arr - K3_arr)
-            diff_K1_K2 = vector_norm(K1_arr - K2_arr)
+            # Расчет параметра θ (локальная погрешность по методичке стр. 7)
+            diff_K2_K3 = np.linalg.norm(K2 - K3)
+            diff_K1_K2 = np.linalg.norm(K1 - K2)
             
             if diff_K1_K2 < 1e-15:
                 theta = 0.0
             else:
                 theta = diff_K2_K3 / diff_K1_K2
             
+            # Сохраняем значение локальной погрешности
             theta_values.append(theta)
             
             # Прогноз шага на основе θ
             if theta > 0.1:
-                h_new = h * 0.7
-                if h_new >= h_min:
-                    h = h_new
-                    rejected_steps += 1
-                    continue
+                # Шаг слишком большой, уменьшаем
+                h = h * 0.7
+                rejected_steps += 1
+                continue
             else:
                 y_new = y + (h/6) * (K1 + 2*K2 + 2*K3 + K4)
                 
                 if theta < 0.01:
+                    # Шаг можно увеличить
                     h = min(h * 1.5, h_max)
-                elif theta <= 0.1:
-                    pass  # шаг оптимальный
                 
                 y = y_new
                 x = x + h
                 points_x.append(x)
                 points_y.append(y.copy())
                 step_count += 1
-            
-            if h < h_min:
-                h = h_min
         
         print(f"Адаптивный расчет завершен:")
         print(f"  Всего шагов: {step_count}")
         print(f"  Отброшенных шагов: {rejected_steps}")
-        print(f"  Среднее θ: {np.mean(theta_values):.4f}")
+        print(f"  Среднее значение θ: {np.mean(theta_values):.6f}")
+        print(f"  Максимальное θ: {np.max(theta_values):.6f}")
+        print(f"  Минимальное θ: {np.min(theta_values):.6f}")
         
-        return np.array(points_x), np.array(points_y)
+        return np.array(points_x), np.array(points_y), theta_values
     
     def adams_4(self, x_end: float) -> Tuple[np.ndarray, np.ndarray]:
         """Метод Адамса 4-го порядка (с разгоном методом РК4)"""
@@ -196,7 +175,7 @@ class ODESolver:
         y = np.zeros((n_steps, len(self.y0)))
         y[0] = self.y0
         
-        # делаем первые 3  итерации с РК4
+        # Разгон: первые 3 шага методом РК4
         for i in range(min(3, n_steps - 1)):
             k1 = self.h * self.f(x[i], y[i])
             k2 = self.h * self.f(x[i] + self.h/2, y[i] + k1/2)
@@ -204,7 +183,7 @@ class ODESolver:
             k4 = self.h * self.f(x[i] + self.h, y[i] + k3)
             y[i+1] = y[i] + (k1 + 2*k2 + 2*k3 + k4) / 6
         
-        # Метод Адамса
+        # Метод Адамса 4-го порядка
         for i in range(3, n_steps - 1):
             f_vals = [self.f(x[j], y[j]) for j in range(i-3, i+1)]
             y[i+1] = y[i] + self.h/24 * (
@@ -212,179 +191,6 @@ class ODESolver:
             )
         
         return x, y
-
-
-def solve_with_different_steps(method_name: str, h_values: List[float]):
-    """Решение с разными шагами для оценки погрешности"""
-    print(f"\n{'='*70}")
-    print(f"Метод: {method_name}")
-    print(f"{'='*70}")
-    
-    results = {}
-    
-    for h in h_values:
-        solver = ODESolver(f_system, x0=1.0, y0=[1.0, 1.0], h=h)
-        
-        if method_name == "Эйлер":
-            x, y, eps_k = solver.euler(2.0, compute_errors=True)
-            order = 1
-            # Выводим локальные погрешности
-            print(f"\nЛокальные погрешности εₖ для шага h={h}:")
-            for i, eps in enumerate(eps_k[:5]):  # первые 5 шагов
-                print(f"  Шаг {i+1}: εₖ = {eps:.6e}")
-            if len(eps_k) > 5:
-                print(f"  ... и еще {len(eps_k)-5} шагов")
-        elif method_name == "Рунге-Кутта 4":
-            x, y = solver.runge_kutta_4(2.0, adaptive=False)
-            order = 4
-            eps_k = []
-        else:
-            x, y = solver.adams_4(2.0)
-            order = 4
-            eps_k = []
-        
-        results[h] = (x, y, order, eps_k)
-    
-    # Вывод результатов для h=0.1
-    h_main = 0.1
-    x, y, order, eps_k = results[h_main]
-    
-    print(f"\nРезультаты с шагом h = {h_main}:")
-    print(f"{'x':>8} {'y':>12} {'y\'':>12}")
-    print("-" * 35)
-    
-    for i in range(0, len(x), 2):
-        print(f"{x[i]:8.4f} {y[i, 0]:12.8f} {y[i, 1]:12.8f}")
-    
-    return results
-
-
-def compare_methods(results_dict: dict, x_ref: np.ndarray, y_ref: np.ndarray):
-    """Сравнение методов с эталонным решением"""
-    print(f"\n{'='*70}")
-    print("СРАВНЕНИЕ МЕТОДОВ С ЭТАЛОННЫМ РЕШЕНИЕМ (h = 0.1)")
-    print(f"{'='*70}")
-    
-    x_rk4, y_rk4, _, _ = results_dict["Рунге-Кутта 4"][0.1]
-    
-    print(f"\n{'x':>8} {'Эйлер':>12} {'РК4':>12} {'Адамс':>12} {'Эталон':>12} "
-          f"{'|Эйл-Эталон|':>14} {'|РК4-Эталон|':>14}")
-    print("-" * 90)
-    
-    x_euler, y_euler, _, _ = results_dict["Эйлер"][0.1]
-    x_adams, y_adams, _, _ = results_dict["Адамс 4"][0.1]
-    
-    for i in range(0, len(x_rk4), 2):
-        # Интерполяция эталонного решения
-        y_ref_at_x = np.interp(x_rk4[i], x_ref, y_ref[:, 0])
-        
-        diff_euler = abs(y_euler[i, 0] - y_ref_at_x)
-        diff_rk4 = abs(y_rk4[i, 0] - y_ref_at_x)
-        diff_adams = abs(y_adams[i, 0] - y_ref_at_x)
-        
-        print(f"{x_rk4[i]:8.4f} {y_euler[i,0]:12.8f} {y_rk4[i,0]:12.8f} "
-              f"{y_adams[i,0]:12.8f} {y_ref_at_x:12.8f} {diff_euler:14.2e} {diff_rk4:14.2e}")
-    
-    # Глобальные погрешности
-    y_ref_at_rk4 = np.interp(x_rk4, x_ref, y_ref[:, 0])
-    global_error_euler = np.max(np.abs(y_euler[:len(x_rk4), 0] - y_ref_at_rk4))
-    global_error_rk4 = np.max(np.abs(y_rk4[:, 0] - y_ref_at_rk4))
-    global_error_adams = np.max(np.abs(y_adams[:len(x_rk4), 0] - y_ref_at_rk4))
-    
-    print(f"\nГлобальные максимальные погрешности:")
-    print(f"  Метод Эйлера:     {global_error_euler:.2e}")
-    print(f"  Метод РК4:        {global_error_rk4:.2e}")
-    print(f"  Метод Адамса:     {global_error_adams:.2e}")
-
-
-def plot_results(results_dict: dict, x_ref: np.ndarray, y_ref: np.ndarray):
-    """Построение графиков с эталонным решением"""
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 11))
-    
-    # График 1: Сравнение всех методов с эталоном
-    for method_name, results in results_dict.items():
-        x, y, _, _ = results[0.1]
-        ax1.plot(x, y[:, 0], marker='o', markersize=3, label=method_name, linewidth=2)
-    
-    # Эталонное решение
-    ax1.plot(x_ref, y_ref[:, 0], 'k-', linewidth=2, label='Эталон (h=0.001)', alpha=0.7)
-    
-    ax1.set_xlabel('x', fontsize=12)
-    ax1.set_ylabel('y', fontsize=12)
-    ax1.set_title('Сравнение численных методов с эталонным решением', fontsize=14, fontweight='bold')
-    ax1.legend(fontsize=10)
-    ax1.grid(True, alpha=0.3)
-    
-    # График 2: Погрешности методов относительно эталона
-    x_rk4, y_rk4, _, _ = results_dict["Рунге-Кутта 4"][0.1]
-    x_euler, y_euler, _, _ = results_dict["Эйлер"][0.1]
-    x_adams, y_adams, _, _ = results_dict["Адамс 4"][0.1]
-    
-    y_ref_at_rk4 = np.interp(x_rk4, x_ref, y_ref[:, 0])
-    
-    diff_euler = np.abs(y_euler[:len(x_rk4), 0] - y_ref_at_rk4)
-    diff_rk4 = np.abs(y_rk4[:, 0] - y_ref_at_rk4)
-    diff_adams = np.abs(y_adams[:len(x_rk4), 0] - y_ref_at_rk4)
-    
-    ax2.semilogy(x_rk4, diff_euler, 'o-', label='|Эйлер - Эталон|', markersize=4, linewidth=2)
-    ax2.semilogy(x_rk4, diff_rk4, 's-', label='|РК4 - Эталон|', markersize=4, linewidth=2)
-    ax2.semilogy(x_rk4, diff_adams, '^-', label='|Адамс - Эталон|', markersize=4, linewidth=2)
-    
-    ax2.set_xlabel('x', fontsize=12)
-    ax2.set_ylabel('Погрешность', fontsize=12)
-    ax2.set_title('Погрешность методов относительно эталонного решения', fontsize=14, fontweight='bold')
-    ax2.legend(fontsize=10)
-    ax2.grid(True, alpha=0.3)
-    
-    # График 3: y'(x) для всех методов
-    for method_name, results in results_dict.items():
-        x, y, _, _ = results[0.1]
-        ax3.plot(x, y[:, 1], marker='o', markersize=3, label=method_name, linewidth=2)
-    
-    ax3.plot(x_ref, y_ref[:, 1], 'k-', linewidth=2, label='Эталон (y\')', alpha=0.7)
-    ax3.set_xlabel('x', fontsize=12)
-    ax3.set_ylabel('y\'', fontsize=12)
-    ax3.set_title('Производная y\'(x)', fontsize=14, fontweight='bold')
-    ax3.legend(fontsize=10)
-    ax3.grid(True, alpha=0.3)
-    
-    # График 4: Фазовый портрет
-    for method_name, results in results_dict.items():
-        x, y, _, _ = results[0.1]
-        ax4.plot(y[:, 0], y[:, 1], marker='o', markersize=3, label=method_name, linewidth=2)
-    
-    ax4.plot(y_ref[:, 0], y_ref[:, 1], 'k-', linewidth=2, label='Эталон', alpha=0.7)
-    ax4.set_xlabel('y', fontsize=12)
-    ax4.set_ylabel('y\'', fontsize=12)
-    ax4.set_title('Фазовый портрет (y\' vs y)', fontsize=14, fontweight='bold')
-    ax4.legend(fontsize=10)
-    ax4.grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    plt.savefig('task1_results_with_reference.png', dpi=150, bbox_inches='tight')
-    print("\nГрафики сохранены в 'task1_results_with_reference.png'")
-    plt.show()
-
-
-def plot_local_errors(results_dict: dict):
-    """Построение графика локальных погрешностей для метода Эйлера"""
-    plt.figure(figsize=(10, 6))
-    
-    for h in [0.05, 0.1, 0.2]:
-        x, y, order, eps_k = results_dict["Эйлер"][h]
-        if eps_k:
-            steps = range(1, len(eps_k) + 1)
-            plt.semilogy(steps, eps_k, 'o-', label=f'h={h}', markersize=4)
-    
-    plt.xlabel('Номер шага k', fontsize=12)
-    plt.ylabel('Локальная погрешность εₖ', fontsize=12)
-    plt.title('Локальные погрешности метода Эйлера на каждом шаге', fontsize=14, fontweight='bold')
-    plt.legend(fontsize=10)
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig('task1_local_errors.png', dpi=150, bbox_inches='tight')
-    print("\nГрафик локальных погрешностей сохранен в 'task1_local_errors.png'")
-    plt.show()
 
 
 def main():
@@ -397,39 +203,202 @@ def main():
     print("y(1) = 1, y'(1) = 1")
     print("x ∈ [1, 2], h = 0.1")
     
-    # Получение эталонного решения с очень маленьким шагом
-    print("\nВычисление эталонного решения с шагом h=0.001...")
-    x_ref, y_ref = get_reference_solution(1.0, 2.0, [1.0, 1.0], h_ref=0.001)
+    x_start, x_end = 1.0, 2.0
+    h_main = 0.1
+    
+    # Получение эталонного решения
+    print("\nВычисление эталонного решения с шагом h = 0.0001...")
+    x_ref, y_ref = get_reference_solution(x_start, x_end, [1.0, 1.0], h_ref=0.0001)
     print("Эталонное решение получено")
     
-    h_values = [0.05, 0.1, 0.2]
-    
-    # Решение всеми методами
-    results_euler = solve_with_different_steps("Эйлер", h_values)
-    results_rk4 = solve_with_different_steps("Рунге-Кутта 4", h_values)
-    results_adams = solve_with_different_steps("Адамс 4", h_values)
-    
-    # Сравнение методов
-    results_dict = {
-        "Эйлер": results_euler,
-        "Рунге-Кутта 4": results_rk4,
-        "Адамс 4": results_adams
-    }
-    
-    compare_methods(results_dict, x_ref, y_ref)
-    
-    # Построение графиков
-    plot_results(results_dict, x_ref, y_ref)
-    plot_local_errors(results_dict)
-    
+    # ==================== МЕТОД ЭЙЛЕРА ====================
     print("\n" + "="*70)
-    print("ВЫВОДЫ:")
+    print("МЕТОД ЭЙЛЕРА (глобальная погрешность ε_k = |y_ист - y_k|)")
     print("="*70)
-    print("1. Методы РК4 и Адамс дают результаты, близкие к эталонному решению")
-    print("2. Локальные погрешности εₖ для метода Эйлера уменьшаются с уменьшением шага")
-    print("3. Глобальная погрешность метода Эйлера ~10^-2, РК4 и Адамса ~10^-5")
-    print("4. Адаптивный метод РК4 автоматически подбирает шаг на основе параметра θ")
-    print("5. Все методы реализованы корректно согласно теории")
+    
+    solver_euler = ODESolver(f_system, x_start, [1.0, 1.0], h_main)
+    x_euler, y_euler, euler_global_errors = solver_euler.euler(x_end, y_ref, x_ref)
+    
+    print(f"\nРезультаты метода Эйлера с шагом h = {h_main}:")
+    print(f"{'k':<3} {'x_k':<12} {'y_k':<14} {'y_ист':<14} {'ε_k = |y_ист - y_k|':<20}")
+    print("-" * 65)
+    
+    for i in range(len(x_euler)):
+        y_true_at_x = np.interp(x_euler[i], x_ref, y_ref[:, 0])
+        print(f"{i:<3} {x_euler[i]:<12.6f} {y_euler[i,0]:<14.8f} {y_true_at_x:<14.8f} {euler_global_errors[i]:<20.2e}")
+    
+    print(f"\nМаксимальная глобальная погрешность метода Эйлера: {max(euler_global_errors):.2e}")
+    
+    # ==================== МЕТОД РК4 (фиксированный шаг) ====================
+    print("\n" + "="*70)
+    print("МЕТОД РУНГЕ-КУТТЫ 4-го ПОРЯДКА (фиксированный шаг)")
+    print("Глобальная погрешность ε_k = |y_ист - y_k|")
+    print("="*70)
+    
+    solver_rk4_fixed = ODESolver(f_system, x_start, [1.0, 1.0], h_main)
+    x_rk4_fixed, y_rk4_fixed, _ = solver_rk4_fixed.runge_kutta_4(x_end, adaptive=False)
+    
+    rk4_fixed_errors = []
+    print(f"\nРезультаты метода РК4 с фиксированным шагом h = {h_main}:")
+    print(f"{'k':<3} {'x_k':<12} {'y_k':<14} {'y_ист':<14} {'ε_k = |y_ист - y_k|':<20}")
+    print("-" * 65)
+    
+    for i in range(len(x_rk4_fixed)):
+        y_true_at_x = np.interp(x_rk4_fixed[i], x_ref, y_ref[:, 0])
+        err = abs(y_rk4_fixed[i, 0] - y_true_at_x)
+        rk4_fixed_errors.append(err)
+        print(f"{i:<3} {x_rk4_fixed[i]:<12.6f} {y_rk4_fixed[i,0]:<14.8f} {y_true_at_x:<14.8f} {err:<20.2e}")
+    
+    print(f"\nМаксимальная глобальная погрешность метода РК4 (фикс): {max(rk4_fixed_errors):.2e}")
+    
+    # ==================== МЕТОД РК4 (адаптивный) ====================
+    print("\n" + "="*70)
+    print("МЕТОД РУНГЕ-КУТТЫ 4-го ПОРЯДКА (адаптивный)")
+    print("Локальная погрешность θ = |K2-K3| / |K1-K2|")
+    print("="*70)
+    
+    solver_rk4_adapt = ODESolver(f_system, x_start, [1.0, 1.0], h_main)
+    x_rk4_adapt, y_rk4_adapt, theta_values = solver_rk4_adapt.runge_kutta_4(x_end, adaptive=True)
+    
+    print(f"\nЛокальные погрешности θ на каждом шаге:")
+    print(f"{'Шаг':<8} {'θ = |K2-K3|/|K1-K2|':<30} {'Решение (увеличить/уменьшить/норма)':<35}")
+    print("-" * 75)
+    
+    for i, theta in enumerate(theta_values):
+        if theta > 0.1:
+            status = "→ УМЕНЬШИТЬ шаг"
+        elif theta < 0.01:
+            status = "→ УВЕЛИЧИТЬ шаг"
+        else:
+            status = "→ шаг ОПТИМАЛЕН"
+        print(f"{i+1:<8} {theta:<30.6e} {status:<35}")
+    
+    # ==================== МЕТОД АДАМСА ====================
+    print("\n" + "="*70)
+    print("МЕТОД АДАМСА 4-го ПОРЯДКА")
+    print("Глобальная погрешность ε_k = |y_ист - y_k|")
+    print("="*70)
+    
+    solver_adams = ODESolver(f_system, x_start, [1.0, 1.0], h_main)
+    x_adams, y_adams = solver_adams.adams_4(x_end)
+    
+    # Вычисляем глобальные погрешности для метода Адамса
+    adams_global_errors = []
+    print(f"\nРезультаты метода Адамса с шагом h = {h_main}:")
+    print(f"{'k':<3} {'x_k':<12} {'y_k':<14} {'y_ист':<14} {'ε_k = |y_ист - y_k|':<20}")
+    print("-" * 65)
+    
+    for i in range(len(x_adams)):
+        y_true_at_x = np.interp(x_adams[i], x_ref, y_ref[:, 0])
+        err = abs(y_true_at_x - y_adams[i, 0])
+        adams_global_errors.append(err)
+        print(f"{i:<3} {x_adams[i]:<12.6f} {y_adams[i,0]:<14.8f} {y_true_at_x:<14.8f} {err:<20.2e}")
+    
+    print(f"\nМаксимальная глобальная погрешность метода Адамса: {max(adams_global_errors):.2e}")
+    
+    # ==================== СРАВНИТЕЛЬНАЯ ТАБЛИЦА ====================
+    print("\n" + "="*90)
+    print("СРАВНИТЕЛЬНАЯ ТАБЛИЦА ГЛОБАЛЬНЫХ ПОГРЕШНОСТЕЙ (h = 0.1)")
+    print("="*90)
+    print(f"{'x':<12} {'Эйлер ε_k':<18} {'РК4 ε_k':<18} {'Адамс ε_k':<18}")
+    print("-" * 66)
+    
+    for i in range(len(x_rk4_fixed)):
+        print(f"{x_rk4_fixed[i]:<12.6f} {euler_global_errors[i]:<18.2e} {rk4_fixed_errors[i]:<18.2e} {adams_global_errors[i]:<18.2e}")
+    
+    # ==================== ПОСТРОЕНИЕ ГРАФИКОВ ====================
+    plot_all_results(x_euler, y_euler, euler_global_errors, 
+                     x_rk4_adapt, y_rk4_adapt, theta_values,
+                     x_adams, y_adams, adams_global_errors,
+                     x_rk4_fixed, y_rk4_fixed, rk4_fixed_errors,
+                     x_ref, y_ref)
+
+
+def plot_all_results(x_euler, y_euler, euler_errors,
+                     x_rk4_adapt, y_rk4_adapt, theta_values,
+                     x_adams, y_adams, adams_errors,
+                     x_rk4_fixed, y_rk4_fixed, rk4_fixed_errors,
+                     x_ref, y_ref):
+    """Построение всех графиков"""
+    
+    fig = plt.figure(figsize=(16, 12))
+    
+    # График 1: Сравнение решений
+    ax1 = plt.subplot(2, 3, 1)
+    ax1.plot(x_euler, y_euler[:, 0], 'o-', label='Эйлер', markersize=4, linewidth=1.5)
+    ax1.plot(x_rk4_fixed, y_rk4_fixed[:, 0], 's-', label='РК4 (фикс)', markersize=4, linewidth=1.5)
+    ax1.plot(x_adams, y_adams[:, 0], '^-', label='Адамс 4', markersize=4, linewidth=1.5)
+    ax1.plot(x_rk4_adapt, y_rk4_adapt[:, 0], 'd-', label='РК4 (адапт)', markersize=2, linewidth=1, alpha=0.7)
+    ax1.plot(x_ref, y_ref[:, 0], 'k-', linewidth=2, label='Эталон', alpha=0.6)
+    ax1.set_xlabel('x')
+    ax1.set_ylabel('y')
+    ax1.set_title('Решение y(x)')
+    ax1.legend(fontsize=9)
+    ax1.grid(True, alpha=0.3)
+    
+    # График 2: Глобальные погрешности (все методы)
+    ax2 = plt.subplot(2, 3, 2)
+    ax2.semilogy(x_euler, euler_errors, 'o-', label='Эйлер', color='red', markersize=4)
+    ax2.semilogy(x_rk4_fixed, rk4_fixed_errors, 's-', label='РК4 (фикс)', color='blue', markersize=4)
+    ax2.semilogy(x_adams, adams_errors, '^-', label='Адамс 4', color='green', markersize=4)
+    ax2.set_xlabel('x')
+    ax2.set_ylabel('ε_k = |y_ист - y_k|')
+    ax2.set_title('Глобальные погрешности')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    # График 3: Локальная погрешность θ для адаптивного РК4
+    ax3 = plt.subplot(2, 3, 3)
+    steps = range(1, len(theta_values) + 1)
+    ax3.semilogy(steps, theta_values, 'd-', color='purple', markersize=4)
+    ax3.axhline(y=0.1, color='r', linestyle='--', label='θ = 0.1 (уменьшить шаг)')
+    ax3.axhline(y=0.01, color='b', linestyle='--', label='θ = 0.01 (увеличить шаг)')
+    ax3.fill_between(steps, 0.01, 0.1, alpha=0.2, color='green', label='Оптимальная зона')
+    ax3.set_xlabel('Номер шага')
+    ax3.set_ylabel('θ = |K2-K3| / |K1-K2|')
+    ax3.set_title('Локальная погрешность (адаптивный РК4)')
+    ax3.legend(fontsize=8)
+    ax3.grid(True, alpha=0.3)
+    
+    # График 4: Производная y'(x)
+    ax4 = plt.subplot(2, 3, 4)
+    ax4.plot(x_euler, y_euler[:, 1], 'o-', label='Эйлер', markersize=4, linewidth=1.5)
+    ax4.plot(x_rk4_fixed, y_rk4_fixed[:, 1], 's-', label='РК4 (фикс)', markersize=4, linewidth=1.5)
+    ax4.plot(x_adams, y_adams[:, 1], '^-', label='Адамс 4', markersize=4, linewidth=1.5)
+    ax4.plot(x_ref, y_ref[:, 1], 'k-', linewidth=2, label='Эталон', alpha=0.6)
+    ax4.set_xlabel('x')
+    ax4.set_ylabel("y'")
+    ax4.set_title("Производная y'(x)")
+    ax4.legend(fontsize=9)
+    ax4.grid(True, alpha=0.3)
+    
+    # График 5: Фазовый портрет
+    ax5 = plt.subplot(2, 3, 5)
+    ax5.plot(y_euler[:, 0], y_euler[:, 1], 'o-', label='Эйлер', markersize=3, linewidth=1)
+    ax5.plot(y_rk4_fixed[:, 0], y_rk4_fixed[:, 1], 's-', label='РК4 (фикс)', markersize=3, linewidth=1)
+    ax5.plot(y_adams[:, 0], y_adams[:, 1], '^-', label='Адамс 4', markersize=3, linewidth=1)
+    ax5.plot(y_ref[:, 0], y_ref[:, 1], 'k-', linewidth=2, label='Эталон', alpha=0.6)
+    ax5.set_xlabel('y')
+    ax5.set_ylabel("y'")
+    ax5.set_title('Фазовый портрет')
+    ax5.legend(fontsize=9)
+    ax5.grid(True, alpha=0.3)
+    
+    # График 6: Адаптивный шаг (точки РК4)
+    ax6 = plt.subplot(2, 3, 6)
+    ax6.plot(x_rk4_adapt, y_rk4_adapt[:, 0], 'd-', color='purple', markersize=4, linewidth=1.5)
+    ax6.plot(x_rk4_adapt, y_rk4_adapt[:, 0], 'd', color='purple', markersize=6, label='Узлы РК4 (адапт)')
+    ax6.plot(x_ref[::100], y_ref[::100, 0], 'k-', linewidth=1, label='Эталон', alpha=0.5)
+    ax6.set_xlabel('x')
+    ax6.set_ylabel('y')
+    ax6.set_title('Адаптивный РК4 (отмечены узлы)')
+    ax6.legend(fontsize=9)
+    ax6.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig('task1_all_results.png', dpi=150, bbox_inches='tight')
+    print("\nГрафики сохранены в 'task1_all_results.png'")
+    plt.show()
 
 
 if __name__ == "__main__":
