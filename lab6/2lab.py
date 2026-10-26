@@ -1,39 +1,40 @@
 import math
 import matplotlib.pyplot as plt
 
-class WaveVariant1:
+class WaveVariant3:
     l = math.pi
     T = 2.0
-    a = 1.0  # Параметр a (для расчетов примем a = 1.0)
+    a2 = 1.0
+    c = -3.0  # Коэффициент при u в источниковом члене
     
     @staticmethod
     def exact(x, t):
-        return math.sin(x - WaveVariant1.a * t)
+        return math.cos(x) * math.sin(2.0 * t)
         
     @staticmethod
     def psi1(x):
-        return math.sin(x)
+        return 0.0
         
     @staticmethod
     def psi2(x):
-        return -WaveVariant1.a * math.cos(x)
+        return 2.0 * math.cos(x)
         
     @staticmethod
     def psi1_second_deriv(x):
-        # Вторая производная от sin(x) это -sin(x)
-        return -math.sin(x)
+        # Поскольку psi1(x) = 0, её вторая производная тоже 0
+        return 0.0
         
     @staticmethod
     def phi0(t):
-        return -math.sin(WaveVariant1.a * t)
+        return math.sin(2.0 * t)
         
     @staticmethod
     def phil(t):
-        return math.sin(WaveVariant1.a * t)
+        return -math.sin(2.0 * t)
 
-def solve_wave(N, K, scheme='explicit', ic2_approx='2nd'):
-    h = WaveVariant1.l / N
-    tau = WaveVariant1.T / K
+def solve_hyperbolic_v3(N, K, scheme='explicit', ic2_approx='2nd'):
+    h = WaveVariant3.l / N
+    tau = WaveVariant3.T / K
     x = [j * h for j in range(N + 1)]
     t = [k * tau for k in range(K + 1)]
     
@@ -41,34 +42,31 @@ def solve_wave(N, K, scheme='explicit', ic2_approx='2nd'):
     
     # 1. Нулевой слой (t = 0)
     for j in range(N + 1):
-        u[0][j] = WaveVariant1.psi1(x[j])
+        u[0][j] = WaveVariant3.psi1(x[j])
         
-    # 2. Первый слой (t = tau) - аппроксимация начальной скорости
+    # 2. Первый слой (t = tau)
     for j in range(1, N):
         if ic2_approx == '1st':
-            # Первый порядок O(tau)
-            u[1][j] = WaveVariant1.psi1(x[j]) + tau * WaveVariant1.psi2(x[j])
+            u[1][j] = WaveVariant3.psi1(x[j]) + tau * WaveVariant3.psi2(x[j])
         elif ic2_approx == '2nd':
-            # Второй порядок O(tau^2) через ряд Тейлора
-            u[1][j] = (WaveVariant1.psi1(x[j]) + 
-                       tau * WaveVariant1.psi2(x[j]) + 
-                       (WaveVariant1.a**2 * WaveVariant1.psi1_second_deriv(x[j])) * (tau**2 / 2.0))
-                       
-    u[1][0] = WaveVariant1.phi0(tau)
-    u[1][N] = WaveVariant1.phil(tau)
+            # u_tt = a^2 * u_xx + c * u
+            u_tt_0 = WaveVariant3.a2 * WaveVariant3.psi1_second_deriv(x[j]) + WaveVariant3.c * WaveVariant3.psi1(x[j])
+            u[1][j] = WaveVariant3.psi1(x[j]) + tau * WaveVariant3.psi2(x[j]) + (tau**2 / 2.0) * u_tt_0
+            
+    u[1][0] = WaveVariant3.phi0(tau)
+    u[1][N] = WaveVariant3.phil(tau)
     
-    sigma = (WaveVariant1.a * tau / h) ** 2
+    sigma = WaveVariant3.a2 * (tau / h) ** 2
     
     if scheme == 'explicit':
-        if sigma > 1.0:
-            print(f"[Внимание] Явная схема неустойчива: число Куранта = {sigma:.3f} > 1.0")
-            
         for k in range(1, K):
             for j in range(1, N):
-                u[k+1][j] = 2.0 * u[k][j] - u[k-1][j] + sigma * (u[k][j+1] - 2.0 * u[k][j] + u[k][j-1])
-            # Граничные условия 1-го рода задаются точно
-            u[k+1][0] = WaveVariant1.phi0(t[k+1])
-            u[k+1][N] = WaveVariant1.phil(t[k+1])
+                # u_tt = u_xx - 3u
+                u[k+1][j] = (2.0 * u[k][j] - u[k-1][j] 
+                             + sigma * (u[k][j+1] - 2.0 * u[k][j] + u[k][j-1]) 
+                             + WaveVariant3.c * tau**2 * u[k][j])
+            u[k+1][0] = WaveVariant3.phi0(t[k+1])
+            u[k+1][N] = WaveVariant3.phil(t[k+1])
             
     elif scheme == 'implicit':
         for k in range(1, K):
@@ -79,14 +77,15 @@ def solve_wave(N, K, scheme='explicit', ic2_approx='2nd'):
             
             for j in range(1, N):
                 a_mat[j] = -sigma
-                b_mat[j] = 1.0 + 2.0 * sigma
+                # Добавляем вклад члена -3u, аппроксимированного на слое k+1 для абсолютной устойчивости
+                b_mat[j] = 1.0 + 2.0 * sigma - WaveVariant3.c * tau**2
                 c_mat[j] = -sigma
                 d_mat[j] = 2.0 * u[k][j] - u[k-1][j]
                 
-            b_mat[0] = 1.0; c_mat[0] = 0.0; d_mat[0] = WaveVariant1.phi0(t[k+1])
-            a_mat[N] = 0.0; b_mat[N] = 1.0; d_mat[N] = WaveVariant1.phil(t[k+1])
+            b_mat[0] = 1.0; c_mat[0] = 0.0; d_mat[0] = WaveVariant3.phi0(t[k+1])
+            a_mat[N] = 0.0; b_mat[N] = 1.0; d_mat[N] = WaveVariant3.phil(t[k+1])
             
-            # Метод прогонки
+            # Прогонка
             A = [0.0] * (N + 1)
             B = [0.0] * (N + 1)
             A[0] = -c_mat[0] / b_mat[0]
@@ -107,68 +106,90 @@ def solve_wave(N, K, scheme='explicit', ic2_approx='2nd'):
     return x, t, u
 
 if __name__ == '__main__':
-    N, K = 30, 300
-    h = WaveVariant1.l / N
-    tau = WaveVariant1.T / K
-    sigma = (WaveVariant1.a * tau / h) ** 2
+    N, K = 40, 400
+    h = WaveVariant3.l / N
+    tau = WaveVariant3.T / K
+    sigma = WaveVariant3.a2 * (tau / h) ** 2
     
-    print(f"Параметры сетки: N = {N}, K = {K}, h = {h:.4f}, tau = {tau:.5f}")
-    print(f"Критерий устойчивости (a^2 * tau^2 / h^2) = {sigma:.4f}\n")
+    print(f"Сетка: N = {N}, K = {K}, h = {h:.4f}, tau = {tau:.5f}")
+    print(f"Число Куранта (sigma) = {sigma:.4f}\n")
     
     configs = [
-        ('explicit', '1st', 'Явная схема (Крест) + 1-й порядок НУ'),
-        ('explicit', '2nd', 'Явная схема (Крест) + 2-й порядок НУ'),
-        ('implicit', '1st', 'Неявная схема + 1-й порядок НУ'),
-        ('implicit', '2nd', 'Неявная схема + 2-й порядок НУ')
+        ('explicit', '1st', 'Явная (1-й пор. НУ)'),
+        ('explicit', '2nd', 'Явная (2-й пор. НУ)'),
+        ('implicit', '1st', 'Неявная (1-й пор. НУ)'),
+        ('implicit', '2nd', 'Неявная (2-й пор. НУ)')
     ]
     
-    print(f"{'Конфигурация':<45} | {'Макс. погрешность ||U - u|| при t=T':<30}")
-    print("-" * 80)
-    
     results = {}
+    print(f"{'Конфигурация':<25} | {'Макс. погрешность'}")
+    print("-" * 45)
     for sch, ic2, name in configs:
-        x, t, u_num = solve_wave(N, K, scheme=sch, ic2_approx=ic2)
-        err = max(abs(u_num[-1][j] - WaveVariant1.exact(x[j], t[-1])) for j in range(N + 1))
+        x, t, u_num = solve_hyperbolic_v3(N, K, scheme=sch, ic2_approx=ic2)
+        err = max(abs(u_num[-1][j] - WaveVariant3.exact(x[j], t[-1])) for j in range(N + 1))
         results[name] = (u_num, err)
-        print(f"{name:<45} | {err:.6e}")
-    print("-" * 80)
+        print(f"{name:<25} | {err:.6e}")
     
-    # Построение графиков
-    u_ex_final = [WaveVariant1.exact(xj, t[-1]) for xj in x]
+    # --- Графики ---
+    u_ex_final = [WaveVariant3.exact(xj, t[-1]) for xj in x]
     
     plt.figure(figsize=(14, 5))
     
-    # График 1: Профиль волны при t = T
+    # График профиля волны
     plt.subplot(1, 2, 1)
     plt.plot(x, u_ex_final, 'k-', linewidth=2, label='Точное решение')
-    
-    u_exp_2nd = results['Явная схема (Крест) + 2-й порядок НУ'][0]
-    u_imp_2nd = results['Неявная схема + 2-й порядок НУ'][0]
-    
-    plt.plot(x, u_exp_2nd[-1], 'ro--', markersize=4, label='Явная схема (2-й пор. НУ)')
-    plt.plot(x, u_imp_2nd[-1], 'bs--', markersize=4, label='Неявная схема (2-й пор. НУ)')
-    plt.title(f'Профиль решения u(x, T) при T={WaveVariant1.T}')
+    plt.plot(x, results['Явная (2-й пор. НУ)'][0][-1], 'ro--', markersize=4, label='Явная схема')
+    plt.plot(x, results['Неявная (2-й пор. НУ)'][0][-1], 'bs--', markersize=4, label='Неявная схема')
+    plt.title(f'Профиль струны u(x, T) при T={WaveVariant3.T}')
     plt.xlabel('x')
     plt.ylabel('u(x, T)')
     plt.grid(True)
     plt.legend()
     
-    # График 2: Динамика погрешности
+    # График динамики погрешности
     plt.subplot(1, 2, 2)
-    
-    for name in configs:
-        sch, ic2, label = name
-        u_num = results[label][0]
-        err_t = [max(abs(u_num[k][j] - WaveVariant1.exact(x[j], t[k])) for j in range(N + 1)) for k in range(K + 1)]
+    for name in [c[2] for c in configs]:
+        u_num = results[name][0]
+        err_t = [max(abs(u_num[k][j] - WaveVariant3.exact(x[j], t[k])) for j in range(N + 1)) for k in range(K + 1)]
+        style = '-' if 'Явная' in name else '--'
+        plt.plot(t, err_t, style, label=name)
         
-        style = '-' if sch == 'explicit' else '--'
-        plt.plot(t, err_t, style, label=label)
-        
-    plt.title('Максимальная погрешность по времени')
+    plt.title('Максимальная погрешность по времени ||U - u||')
     plt.xlabel('t')
-    plt.ylabel('||U - u||')
+    plt.ylabel('Погрешность')
     plt.grid(True)
-    plt.legend(fontsize=8)
+    plt.legend()
+    
+    plt.tight_layout()
+    plt.show()
+
+    # --- Исследование зависимости погрешности от параметров сетки ---
+    N_list = [10, 20, 40, 80]
+    K_list = [100, 200, 400, 800]
+    
+    errs_h = []
+    for cur_N in N_list:
+        cur_K = 2000 # Фиксируем малый шаг по времени
+        x_tmp, t_tmp, u_tmp = solve_hyperbolic_v3(cur_N, cur_K, scheme='implicit')
+        errs_h.append(max(abs(u_tmp[-1][j] - WaveVariant3.exact(x_tmp[j], t_tmp[-1])) for j in range(cur_N+1)))
+        
+    errs_tau = []
+    for cur_K in K_list:
+        cur_N = 200 # Фиксируем малый шаг по пространству
+        x_tmp, t_tmp, u_tmp = solve_hyperbolic_v3(cur_N, cur_K, scheme='implicit')
+        errs_tau.append(max(abs(u_tmp[-1][j] - WaveVariant3.exact(x_tmp[j], t_tmp[-1])) for j in range(cur_N+1)))
+        
+    fig2, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+    ax1.loglog([WaveVariant3.l/n for n in N_list], errs_h, 'o-', color='blue')
+    ax1.set_title('Зависимость ошибки от шага h')
+    ax1.set_xlabel('h')
+    ax1.set_ylabel('Погрешность')
+    ax1.grid(True)
+    
+    ax2.loglog([WaveVariant3.T/k for k in K_list], errs_tau, 's-', color='green')
+    ax2.set_title('Зависимость ошибки от шага tau')
+    ax2.set_xlabel('tau')
+    ax2.grid(True)
     
     plt.tight_layout()
     plt.show()
